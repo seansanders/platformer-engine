@@ -1091,7 +1091,6 @@ class Hitbox {
   #cosa;
   #sina;
   
-  // drag needed only for sprites
   constructor(shape, parent, moves, rotates, x, y, vx, vy, mass, frict, elast,
               ignoreFunc, collideFunc) {
     this.parent = parent;
