@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset = "UTF-8">
+    <title>Platformer Engine</title>
+    <meta name="author" content="seanssanders">
+    <meta name="description" content="two-stage collision engine for platformers with moving and rotating ground geometry plus momentum transfer">
+    
+    <style>
+      body {
+          background-color: rgb(0, 0, 0);
+          color: rgb(255, 255, 255);
+          text-align: center;
+      }
+    </style>
+    
+    <script src="engine.js" type="text/javascript"></script>
+    
+    <script type="text/javascript">
+      var fps = 60;
+      var d;
+      
+      function draw(shape, d, color, fill) {
+        if (shape.parent.ignoreFunc != undefined) color = "blue";
+        if (shape.parent.collideFunc != undefined && !fill) color = "green";
+        if (shape.parent.surfaceV != undefined) color = "purple";
+        
+        d.strokeStyle = color;
+        d.lineWidth = 1;
+        
+        if (shape instanceof Line) {
+          d.beginPath();
+          d.moveTo(shape.x1, shape.y1);
+          d.lineTo(shape.x2, shape.y2);
+        } else if (shape instanceof Tri) {
+          d.beginPath();
+          d.moveTo(shape.x1, shape.y1);
+          d.lineTo(shape.x2, shape.y2);
+          d.lineTo(shape.x3, shape.y3);
+          d.lineTo(shape.x1, shape.y1);
+        } else if (shape instanceof Rect) {
+          d.beginPath();
+          d.moveTo(shape.x, shape.y);
+          d.lineTo(shape.x + shape.w, shape.y);
+          d.lineTo(shape.x + shape.w, shape.y + shape.h);
+          d.lineTo(shape.x, shape.y + shape.h);
+          d.lineTo(shape.x, shape.y);
+        } else if (shape instanceof RotRect) {
+          d.beginPath();
+          d.moveTo(shape.x1, shape.y1);
+          d.lineTo(shape.x2, shape.y2);
+          d.lineTo(shape.x3, shape.y3);
+          d.lineTo(shape.x4, shape.y4);
+          d.lineTo(shape.x1, shape.y1);
+        } else if (shape instanceof Poly) {
+          d.beginPath();
+          
+          d.moveTo(shape.ptsX[0], shape.ptsY[0]);
+          
+          for (let i = 0; i < shape.ptsX.length; i++) {
+            d.lineTo(shape.ptsX[i], shape.ptsY[i]);
+          }
+          
+          d.lineTo(shape.ptsX[0], shape.ptsY[0]);
+        } else if (shape instanceof Circle) {
+          d.beginPath();
+          d.arc(shape.x, shape.y, shape.r, 0, tau);
+          d.stroke();
+        }
+        
+        if (fill) {
+          d.fillStyle = color;
+          d.fill();
+        } else {
+          d.stroke();
+        }
+        
+        if (shape.parent.rotates) {
+          d.beginPath();
+          d.arc(shape.parent.xc + shape.parent.x, shape.parent.yc + shape.parent.y, 2, 0, tau);
+          d.stroke();
+        }
+      }
+      
+      function game() {
+        var shapes = [new Hitbox(new Rect(0, 0, 240, 60), undefined, false, true, 0, 270, 0, 0, 20, 0.8, 0.5, undefined, tipping_platform), new Hitbox(new Rect(0, 200, 240, 60), undefined, false, false, 240, 70, 0, 0, 0, 0.8, 0), new Hitbox(new Tri(250, 140, 300, 200, 350, 140), undefined, false, false, 0, 70, 0, 0, 0, 0.9, 0), new Hitbox(new Rect(0, 100, 100, 200), undefined, false, false, 0, 70, 0, 0, 0, 0.5, 1), new Hitbox(new Tri(400, 200, 430, 140, 460, 200), undefined, false, false, 0, 70, 0, 0, 0, 0.1, 0), new Hitbox(new Line(0, 0, 480, 0, true), undefined, false, false, 0, 0, 0, 0, 0, 1, 0), new Hitbox(new Line(480, 0, 480, 360, true), undefined, false, false, 0, 0, 0, 0, 0, 1, 0), new Hitbox(new Line(0, 360, 0, 0, true), undefined, false, false, 0, 0, 0, 0, 0, 1, 0), new Hitbox(new Circle(0, 0, 25), undefined, false, false, 230, 110, 0, 0, 1, 0.8, 0)];
+        
+        var hr = new Hitbox(new Rect(7, 0, 15, 38), undefined, true, false, 200, 5, 0, 0, 0.000503, 1, 0);
+        var hc = new Hitbox(new Circle(0, 0, 10), undefined, true, false, 200, 5, 0, 0, 0.000503, 1, 0);
+        
+        var h = hr;
+        
+        var dead = false;
+        
+        shapes[4].surfaceV = 2;
+        
+        var mover = new Hitbox(new RotRect(0, 0, 50, 25, pi/12), undefined, true, false, 270, 110, 0, 0, 0, 0.5, 0.05);
+        var rotor = new Hitbox(new RotRect(0, 0, 50, 25, 0), undefined, false, true, 100, 90, 0, 0, 0, 0.5, 0, one_way_platform);
+        rotor.set_rot_params(5, 0, 0, 0.005);
+        shapes.push(mover);
+        
+        shapes[0].set_rot_params(140, 30, 0, 0);
+        shapes[0].kp = 0.008;
+        shapes[0].kd = 0.08;
+        shapes[0].setA = 0;
+        
+        shapes.push(rotor);
+        
+        var pent = new Hitbox(new Poly([0, 30, 20, -20, -30], [0, 20, 50, 50, 20], undefined), undefined, true, true, 300, 100, 0, 0, 1, 0.5, 0, one_way_platform, tipping_platform);
+        pent.set_rot_params(0, 20, 0, .01);
+        pent.kp = 0.008;
+        pent.kd = 0.08;
+        pent.setA = 0;
+        shapes.push(pent);
+        
+        sprites = [];
+        
+        water = {"drag": 0.8, "vx": 0, "vy": 0, "swim": true};
+        
+        sprites.push(new Hitbox(new Rect(0, 0, 50, 170, undefined), undefined, false, false, 0, 0, 0, 0, 0, 0, 0, undefined, fluid_effect));
+        sprites[0].parent = water;
+        
+        var i = 0;
+        var j = 0;
+        
+        // player parameters
+        var jumpStrength = 12;
+        var groundWalkPower = 2;
+        var fluidWalkPower  = 6;
+        var voidWalkPower   = 0.2;
+        
+        function tick() {
+          if (dead) {
+            return;
+          }
+          
+          d.fillStyle = "black";
+          d.fillRect(0, 0, 480, 360);
+          
+          for (var shape of sprites) {
+            draw(shape.shape, d, "#002070", true);
+          }
+          
+          draw(h.shape, d, "red", false);
+          
+          for (var shape of shapes) {
+            draw(shape.shape, d, "white", false);
+          }
+          
+          i = (i + tau/60) % tau;
+          j = (j + tau/360) % tau;
+          
+          
+          if (Math.abs(shapes[0].a - shapes[0].setA) < fuzziest) {
+            shapes[0].va = shapes[0].setA - shapes[0].a;
+          } else {
+            shapes[0].va += (shapes[0].setA - shapes[0].a) * shapes[0].kp;
+            shapes[0].va -= shapes[0].va * shapes[0].kd;
+          }
+          
+          if (Math.abs(pent.a - pent.setA) < fuzziest) {
+            pent.va = pent.setA - pent.a;
+          } else {
+            pent.va += (pent.setA - pent.a) * pent.kp;
+            pent.va -= pent.va * pent.kd;
+          }
+          
+          mover.vy = -3 * Math.sin(j);
+          
+          pent.vy = 1*Math.sin(i);
+          pent.vx = 2*Math.sin(j);
+          
+          h.motion_sweep(shapes);
+         
+          for (let shape of shapes) { 
+            shape.motion_ground();
+          }
+          
+          h.motion_correct(shapes);
+          h.sprite_collide(sprites);
+          
+          // player logic block, ought to be associated with an object after this demo...
+          {
+            // TODO someday (should be very simple): object-specific drag...
+            let swim = false;
+            let grav = (h.gravity == undefined) ? gravity : h.gravity;
+            let startVx = h.vx;
+            let startVy = h.vy;
+            h.vx = 0;
+            h.vy = 0;
+          
+            let totalFluidFraction = 0;
+          
+            let fluidEvents = [];
+          
+            for (let event of h.events) {
+              if (event.type == "fluid") {
+                fluidEvents.push(event);
+                totalFluidFraction += event.overlap;
+                
+                if (event.obj.swim) swim = true;
+              }
+            }
+            
+            let totalDrag = 0;
+            
+            for (let event of fluidEvents) {
+              if (totalFluidFraction < 1) {
+                h.vx += event.overlap * ((startVx - event.obj.vx) * event.obj.drag + event.obj.vx);
+                h.vy += event.overlap * ((startVy - event.obj.vy) * event.obj.drag + event.obj.vy);
+                totalDrag += event.obj.drag * event.overlap;
+              } else {
+                h.vx += (event.overlap / totalFluidFraction) * ((startVx - event.obj.vx) * event.obj.drag + event.obj.vx);
+                h.vy += (event.overlap / totalFluidFraction) * ((startVy - event.obj.vy) * event.obj.drag + event.obj.vy);
+                totalDrag += event.obj.drag * event.overlap / totalFluidFraction;
+              }
+            }
+            
+            if (totalFluidFraction < 1) {
+              h.vx += (1 - totalFluidFraction) * ((startVx - air.vx) * air.drag + air.vx);
+              h.vy += (1 - totalFluidFraction) * ((startVy - air.vy) * air.drag + air.vy);
+              totalDrag += (1 - totalFluidFraction) * air.drag;
+            }
+            
+            let groundMove = 0;
+            let fluidMove  = (1 - totalDrag) * fluidWalkPower;
+            
+            if (h.onGround) {
+              groundMove = (1 - h.groundObj.frict * h.frict) * groundWalkPower;
+            }
+           
+            // TODO handle cases with multiple arrow keys pressed at the same time
+            let maxMove = Math.max(groundMove, fluidMove, voidWalkPower);
+            
+            if (keysPressed["arrowleft"] ) {
+              h.vx += -maxMove;
+            }
+            
+            if (keysPressed["arrowright"]) {
+              h.vx += maxMove;
+            }
+          
+            if (keysPressed["arrowdown"] && swim) {
+              h.vy += maxMove;
+            }
+            
+            if (keysPressed["arrowup"]) {
+              if (h.onGround && totalFluidFraction < 1/2) {
+                startVx = h.vx;
+                startVy = h.vy;
+               
+                [h.vx, h.vy] = reject(h.vx, h.vy, grav.x, grav.y);
+                
+                let jumpX, jumpY;
+                
+                [jumpX, jumpY] = normalize(grav.x, grav.y);
+                
+                let comp = dot(h.groundNorm.x, h.groundNorm.y, jumpX, jumpY);
+                
+                let [surfaceVx, surfaceVy] = projnorm(h.groundVel.x, h.groundVel.y, jumpX, jumpY);
+                
+                jumpX *= jumpStrength * comp;
+                jumpY *= jumpStrength * comp;
+               
+                h.vx += jumpX + surfaceVx;
+                h.vy += jumpY + surfaceVy;
+              } else if (swim) {
+                h.vy -= maxMove;
+              }
+            }
+            
+            if (h.groundObj != undefined && h.groundObj.rotates && h.groundPt != undefined && h.groundObj.collideFunc == tipping_platform) {
+              tipping_platform(h.groundObj, h, h.groundNorm, h.vx - startVx, h.vy - startVy, h.groundPt);
+            }
+            
+            h.vx += grav.x;
+            h.vy += grav.y;
+            
+            if (h.events.includes("crush")) {
+              h.moveto(200, 5);
+              h.vx = 0;
+              h.vy = 0;
+              document.getElementById("blammer").innerHTML += "crushed ";
+            }
+            
+            h.events = [];
+            
+            if (keysPressed["r"]) {
+              h = hr;
+              h.moveto(200, 5);
+              h.vx = 0;
+              h.vy = 0;
+            }
+            
+            if (keysPressed["c"]) {
+              h = hc;
+              h.moveto(200, 5);
+              h.vx = 0;
+              h.vy = 0;
+            }
+            
+            if (keysPressed["x"]) {
+              dead = true;
+            }
+          
+          }
+        }
+      
+        var gameCanvas = document.getElementById("gameCanvas");
+        d = gameCanvas.getContext("2d");
+        var loop = setInterval(tick, 1000/fps);
+      }
+      
+
+    </script>
+</head>
+<body onload="game();" onkeydown="if (!event.repeat) {key_down(event.key);}", onkeyup="if (!event.repeat) {key_up(event.key);}">
+    <div id="spriteContainer" style="overflow: hidden;"></div>
+    <canvas id="gameCanvas" width=480 height=360 style="border:1px solid #FFFFFF" onmousemove="mouseX = event.offsetX; mouseY = event.offsetY;"></canvas>
+    <p>Press c to turn into a circle, r to turn into a rectangle<p>
+    <p id="blammer" style="color: red;"></p>
+</body>
+</html>
