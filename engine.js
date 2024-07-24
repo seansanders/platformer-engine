@@ -7,12 +7,12 @@ const fuzziest = 1/8192;
 const tau   = 6.283185307179586476925286766559005768394338798750211641949889184615632;
 const pi    = 3.14159265358979323846264338327950288419716939937510;
 
+var gravity = {"x": 0, "y": 0.5};
+var air     = {"drag": 0.98, "vx": 0, "vy": 0, "swim": false};
+
 var keysPressed = {"escape": false,"f1": false,"f2": false,"f3": false,"f4": false,"f5": false,"f6": false,"f7": false,"f8": false,"f9": false,"f10": false,"f11": false,"f12": false,"delete": false,"`": false,"1": false,"2": false,"3": false,"4": false,"5": false,"6": false,"7": false,"8": false,"9": false,"0": false,"-": false,"=": false,"backspace": false,"home": false,"~": false,"!": false,"@": false,"#": false,"$": false,"%": false,"^": false,"&": false,"*": false,"(": false,")": false,"_": false,"+": false,"tab": false,"q": false,"w": false,"e": false,"r": false,"t": false,"y": false,"u": false,"i": false,"o": false,"p": false,"[": false,"]": false,"\\": false,"pageup": false,"{": false,"}": false,"|": false,"capslock": false,"a": false,"s": false,"d": false,"f": false,"g": false,"h": false,"j": false,"k": false,"l": false,";": false,"'": false,"enter": false,"pagedown": false,":": false,"\"": false,"shift": false,"z": false,"x": false,"c": false,"v": false,"b": false,"n": false,"m": false,",": false,".": false,"/": false,"end": false,"<": false,">": false,"?": false,"control": false,"alt": false," ": false,"arrowup": false,"arrowleft": false,"arrowdown": false,"arrowright": false}; // only keys on my laptop keyboard, you might want to extend this
 
 const SHIFTED_KEYS = {"`": "~","1": "!","2": "@","3": "#","4": "$","5": "%","6": "^","7": "&","8": "*","9": "(","0": ")","-": "_","=": "+","[": "{","]": "}","\\": "|",";": ":","'": "\"",",": "<",".": ">","": "?"};
-
-var gravity = {"x": 0, "y": 0.5};
-var air     = {"drag": 0.98, "vx": 0, "vy": 0, "swim": false};
 
 function key_down(key) {
   key = key.toLowerCase();
@@ -830,7 +830,8 @@ class Poly {
     }
   }
   
-  // can skip this on account of the point arrays can be edited from the outside
+  // can skip this practically on account of the point arrays can be edited from the outside
+  // (which should be faster as new input ptsX and ptsY arrays need not be created
   set_pts(ptsX, ptsY, calcNorms) {
   
     if (ptsSet.length != this.ptsX.length || ptsX.length != this.ptsX.length || ptsY.length != this.ptsY.length) {
@@ -971,6 +972,10 @@ class Circle {
     return pts;
   }
   
+  // get_norms gets the norm in the direction of the nearest point in pts
+  // (nearest point and not all points because this is used in SAT collision-
+  // a circle intersecting with a polygon will have a minimum translation
+  // vector only in the direction of the nearest point to the circle center)
   get_norms(pts) {
     let norms = [];
     
@@ -988,6 +993,10 @@ class Circle {
     return this.get_norms(pts);
   }
   
+  // get_pts gets points on the circle tangent to lines with the given norms-
+  // this is used in motion_sweep because the first point of a moving circle to
+  // intersect a polygon will be a point on that circle tangent to some surface
+  // of that polygon
   get_pts(norms) {
     let pts = [];
     
@@ -1020,6 +1029,9 @@ function one_way_platform(encountered, caller) {
   
   let bothCircles = false;
   let norms;
+  
+  // basically- check that the caller is above every surface of the encountered shape
+  // in the direction of the caller's gravity
   
   if (encountered.shape instanceof Circle) {
     if (caller.shape instanceof Circle) {
@@ -1097,8 +1109,11 @@ class Hitbox {
     this.moves = moves;
     this.rotates = rotates;
     
+    // baseShape is saved as a reference for whenever the shape moves or rotates
+    // (for fear of cumulative translations/rotations eventually dislocating
+    // its points relative to each other)
     this.#baseShape = shape;
-    this.#baseShape.parent = this; // not necessary but whatever
+    this.#baseShape.parent = this; // not necessary but i feel weird not setitng it
     
     if (!rotates) {
       if (this.#baseShape instanceof Rect) {
@@ -1133,6 +1148,9 @@ class Hitbox {
     this.y = y;
     this.vx = vx;
     this.vy = vy;
+    
+    // tracks how much the hitbox has moved so far in this tick (motion_sweep + motion_correct or motion_ground
+    // depending on what this hitbox is for), 
     this.movedX = 0;
     this.movedY = 0;
     
@@ -1319,7 +1337,8 @@ class Hitbox {
     }
     
     // generator: the object that casts the intersecting rays.
-    // just look at collision to see why we need this.
+    // this needs to be stored, because both the original calling hitbox and the ground
+    // hitbox being checked get this function called
     
     for (let sourcePt of sourcePts) {
       newpts = obj.shape.intersect_line(sourcePt.x, sourcePt.y, sourcePt.x+vx, sourcePt.y+vy, true);
@@ -1395,6 +1414,11 @@ class Hitbox {
     }
   }
   
+  // first stage of ground collision- using above functions, looks at the movement path of this hitbox
+  // and stops it from passing through objects it will encounter.
+  // has problems with encountering objects with different velocities, and doesn't consider
+  // rotating objects' rotations at all. these failures are then handled by the second stage
+  // after the ground moves and rotates
   motion_sweep(objs) {
     this.encounteredGround = [];
     this.ignoredGround     = [];
@@ -1461,6 +1485,13 @@ class Hitbox {
         } 
       }
       
+      // rather than immediately moving and updating velocity
+      // based on the nearest object encountered, in each step we repeatedly check whether
+      // movement towards the nearest object actually hits another first, until all objects are exhausted or path is clear.
+      // this condition is impossible if the ground is all moving at the same speed, but
+      // if the ground objects may move at different speeds, "nearest" is not a consistent
+      // metric (sweep velocity is always relative to each object's velocity rather than consistent between all...)
+      
       if (minDistPt == undefined) {
         if (!newStep) {
           this.moveto(this.x + this.vx, this.y + this.vy);
@@ -1481,9 +1512,14 @@ class Hitbox {
           finalVx = finalVx - othervx;
           finalVy = finalVy - othervy;
           
-          // (other set in last iteration)
-          let rotContactPt;
           
+          let rotContactPt;          
+          
+          // find the rotational velocity of the colliding object- we find a more distant reference
+          // point for the rotational velocity at nearly the same distance if possible- this is
+          // because the largest rotational velocity actually affecting the object should be the one considered.
+          // this will be useful in cases where a surface of this hitbox is roughly flush with the rotating ground
+          // (other set in last iteration, is why it's not defined before here)
           if (other.rotates) {
             let maxCenterDistsq = 0;
             
@@ -1519,6 +1555,13 @@ class Hitbox {
             othervy += lastPt.norm.x * this.surfaceV;
           }
       
+          // adjust this hitbox's final velocity based on ground object's + our
+          // friction and elasticity- we do this calculation in the ground object's
+          // velocity reference frame- based on its linear velocity, rotational velocity at the collision
+          // point, and its "moving surface" velocity
+          // "final velocity" is specified as opposed to just current "velocity" because
+          // friction + elasticity effects are not applied to the velocity we are actually
+          // moving by in this motion_sweep call, only the velocity we will end up with at the end
           let [projx, projy] = projnorm(finalVx, finalVy, lastPt.norm.x, lastPt.norm.y);
           finalVx = (finalVx - projx) * this.frict * other.frict;
           finalVx -= (this.elast + other.elast) * projx / 2;
@@ -1528,6 +1571,9 @@ class Hitbox {
           finalVx += othervx;
           finalVy += othervy;
           
+          // determine object we are "standing on" (object we collided with whose surface norm
+          // was most directly opposed to gravity), save information about it to, for example,
+          // determine movement parameters
           let gravDotNorm;
           
           if (this.gravity == undefined) {
@@ -1615,6 +1661,8 @@ class Hitbox {
         }
       }
       
+      // set the remaining velocity (tangent to the colliding surface) that should be retained for the next step
+      // should this colliding object turn out to the nearest in this hitbox's path
       let [projx, projy] = projnorm(other.vx, other.vy, minDistPt.norm.x, minDistPt.norm.y);
       
       stepVx += projx;
@@ -1630,6 +1678,8 @@ class Hitbox {
       this.vy = Math.abs(stepVy) < fuzzier ? 0 : stepVy;
       
       if (opposedNorms) {
+        // if there has been an encountered norm opposed to the colliding surface's norm,
+        // physically this hitbox is in a corner and can move no further
         remainderVx = 0;
         remainderVy = 0;
       } else {
@@ -1644,7 +1694,10 @@ class Hitbox {
     this.movedX += this.vx;
     this.movedY += this.vy;
     
+    // move by the final remaining velocity- this must be done because
+    // the position update in the loop only occurs when an object has actually been encountered.
     this.moveto(this.x + this.vx, this.y + this.vy);
+    
     this.vx = finalVx;
     this.vy = finalVy;
   }
@@ -1693,7 +1746,6 @@ class Hitbox {
         
         let result = {"obj": obj, "crush": true};
         
-        // minimum component of translation distance in direction of velocity vector
         let minCompDist = Infinity;
         let minNorm;
         let minOverlap = 0;
@@ -1753,6 +1805,8 @@ class Hitbox {
             }
           }
           
+          // consider the axis with the smallest overlap
+          // between this shape and the overlapping shape
           let compDist = Math.abs(overlap);
           
           if (compDist < minCompDist) {
@@ -1797,6 +1851,12 @@ class Hitbox {
     
   }
   
+  // second stage of ground collision: if the sweep step hit an inconsistency and did not remove us from all objects
+  // or an object rotated into colliding with this hitbox, we must get pushed out of the object
+  // uses Separating Axis Theorem to determine translation vectors of overlapping objects- then moves the hitbox,
+  // largest overlap vector first.
+  // probably should work fine in most cases- in configurations of more than 2 rotating or moving objects
+  // it may break down, causing this hitbox to be crushed whe theoretically a resolution might be found.
   motion_correct(objs) {
     let finalVx = this.vx;
     let finalVy = this.vy;
@@ -1827,7 +1887,9 @@ class Hitbox {
       
       this.encounteredGround.push(maxResult.obj);
       
-      if (maxResult.crush) continue; // maybe we'll fix it... somehow...
+      // object that crushes (fully contains) this hitbox can't push us out, but don't stop here-
+      // maybe another object will push us out of this one
+      if (maxResult.crush) continue;
        
       let other = maxResult.obj;
       let norm = maxResult.norm;
@@ -1838,11 +1900,14 @@ class Hitbox {
       norm.x *= Math.sign(maxResult.overlap);
       norm.y *= Math.sign(maxResult.overlap);
       
+      // find norm most directly opposed to the translation vector from this intersecting object (if any)
+      // unless the norm is very close to being directly opposed
       let opposedNorms = false;
       let opposedNorm;
       
       for (let prevNorm of prevNorms) {
-        let theDot = dot(prevNorm.x, prevNorm.y, norm.x, norm.y)
+        let theDot = dot(prevNorm.x, prevNorm.y, norm.x, norm.y);
+        
         if (theDot < 0 && theDot > -0.99) {
           opposedNorms = true;
           opposedNorm = prevNorm;
@@ -1853,6 +1918,10 @@ class Hitbox {
       prevNorms.push(norm);
       
       if (opposedNorms) {
+        // if there is a norm opposed to this translation vector, adjust our translation vector to
+        // be perpendicular to that norm, while still being long enough to remove us from the current
+        // object- very directly opposed norms are excluded above because this would create a translation
+        // vector of very very great or infinite length
         [transX, transY] = reverse_proj(transX, transY, opposedNorm.y, -opposedNorm.x);
         this.moveto(this.x + transX, this.y + transY);
       } else {
@@ -1862,12 +1931,18 @@ class Hitbox {
       this.movedX += transX;
       this.movedY += transY;
       
+      // if we already encountered this ground object in the sweep step, skip over this block-
+      // - which adjusts this hitbox's velocity for this collision & does other relevant collision effects -
+      // because we already did all that in the sweep step and doing it twice will cause problems of some kind
       if (!encounteredSweep.includes(other)) {
         let othervx = other.vx;
         let othervy = other.vy;
         
         let rotContactPt;
         
+        // find the rotational velocity of the intersecting object- in order to do so
+        // we must sweep this hitbox by the translation vector we just moved by in order
+        // to find the intersection's effective contact point and thus a point to calculate velocity at
         if (other.rotates) {
           let pts = this.intersect_path_with(other, -transX, -transY);
           pts.push(...other.intersect_path_with(this, transX, transY));
@@ -1912,6 +1987,10 @@ class Hitbox {
         let startVx = this.vx;
         let startVy = this.vy;
         
+        // adjust this hitbox's velocity based on ground object's + our
+        // friction and elasticity- we do this calculation in the ground object's
+        // velocity reference frame- based on its linear velocity, rotational velocity at the collision
+        // point, and its "moving surface" velocity
         this.vx -= othervx;
         this.vy -= othervy;
         
@@ -1928,6 +2007,9 @@ class Hitbox {
           other.collideFunc(other, this, norm, this.vx - startVx, this.vy - startVy, rotContactPt);
         }
         
+        // determine object we are "standing on" (object we collided with whose surface norm
+        // was most directly opposed to gravity), save information about it to, for example,
+        // determine movement parameters
         let gravDotNorm;
         
         if (this.gravity == undefined) {
@@ -1952,10 +2034,13 @@ class Hitbox {
     
     this.encounteredGround = [];
     
+    // if this step failed to remove us from all ground, this hitbox is being crushed
     overlaps = this.get_overlaps(objs, true);
     if (overlaps.length > 0) this.events.push("crush");
   }
   
+  // note: fluids in the environment are implemented as sprites. "sprites" basically
+  // means "nonsolids"
   sprite_collide(sprites) {
     this.encounteredSprites = [];
     

@@ -86,7 +86,7 @@
         var shapes = [new Hitbox(new Rect(0, 0, 240, 60), undefined, false, true, 0, 270, 0, 0, 20, 0.8, 0.5, undefined, tipping_platform), new Hitbox(new Rect(0, 200, 240, 60), undefined, false, false, 240, 70, 0, 0, 0, 0.8, 0), new Hitbox(new Tri(250, 140, 300, 200, 350, 140), undefined, false, false, 0, 70, 0, 0, 0, 0.9, 0), new Hitbox(new Rect(0, 100, 100, 200), undefined, false, false, 0, 70, 0, 0, 0, 0.5, 1), new Hitbox(new Tri(400, 200, 430, 140, 460, 200), undefined, false, false, 0, 70, 0, 0, 0, 0.1, 0), new Hitbox(new Line(0, 0, 480, 0, true), undefined, false, false, 0, 0, 0, 0, 0, 1, 0), new Hitbox(new Line(480, 0, 480, 360, true), undefined, false, false, 0, 0, 0, 0, 0, 1, 0), new Hitbox(new Line(0, 360, 0, 0, true), undefined, false, false, 0, 0, 0, 0, 0, 1, 0), new Hitbox(new Circle(0, 0, 25), undefined, false, false, 230, 110, 0, 0, 1, 0.8, 0)];
         
         var hr = new Hitbox(new Rect(7, 0, 15, 38), undefined, true, false, 200, 5, 0, 0, 0.000503, 1, 0);
-        var hc = new Hitbox(new Circle(0, 0, 10), undefined, true, false, 200, 5, 0, 0, 0.000503, 1, 0);
+        var hc = new Hitbox(new Circle(0, 0, 10), undefined, true, false, 200, 15, 0, 0, 0.000503, 1, 0);
         
         var h = hr;
         
@@ -222,6 +222,8 @@
               totalDrag += (1 - totalFluidFraction) * air.drag;
             }
             
+            if (air.swim) swim = true;
+            
             let groundMove = 0;
             let fluidMove  = (1 - totalDrag) * fluidWalkPower;
             
@@ -269,6 +271,8 @@
               }
             }
             
+            // transfer momentum from moving or jumping on a tipping object to the object
+            // (as obviously this velocity won't be transfered in the collide stages where the function is normally called)
             if (h.groundObj != undefined && h.groundObj.rotates && h.groundPt != undefined && h.groundObj.collideFunc == tipping_platform) {
               tipping_platform(h.groundObj, h, h.groundNorm, h.vx - startVx, h.vy - startVy, h.groundPt);
             }
@@ -285,6 +289,7 @@
             
             h.events = [];
             
+            // switch player hitbox
             if (keysPressed["r"]) {
               h = hr;
               h.moveto(200, 5);
@@ -294,7 +299,7 @@
             
             if (keysPressed["c"]) {
               h = hc;
-              h.moveto(200, 5);
+              h.moveto(200, 15);
               h.vx = 0;
               h.vy = 0;
             }
