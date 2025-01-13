@@ -458,7 +458,7 @@ class Tri extends Shape {
   }
   
   copy() {
-    return new Tri(this.x1, this.y1, this.x2, this.y2, this.x3, this.y3, parent);
+    return new Tri(this.x1, this.y1, this.x2, this.y2, this.x3, this.y3, this.parent);
   }
   
   set_pts(set1, set2, set3, x1, y1, x2, y2, x3, y3, calcNorms, calcDistVars) {
@@ -623,7 +623,7 @@ class Rect extends Shape {
   }
   
   copy() {
-    return new Rect(this.x, this.y, this.w, this.h);
+    return new Rect(this.x, this.y, this.w, this.h, this.parent);
   }
   
   reset(x, y, w, h) {
@@ -1043,7 +1043,7 @@ class Poly extends Shape {
     let ptsX = [];
     let ptsY = [];
     
-    for (let i = 0; i < len(this.ptsX); i++) {
+    for (let i = 0; i < this.ptsX.length; i++) {
       ptsX.push(this.ptsX[i]);
       ptsY.push(this.ptsY[i]);
     } 
@@ -1454,39 +1454,16 @@ class Hitbox {
     this.baseShape = shape;
     this.baseShape.parent = this; // not necessary but i feel weird not setitng it
     
-    if (!rotates) {
-      if (this.baseShape instanceof Rect) {
-        this.shape = new Rect(this.baseShape.x + x, this.baseShape.y + y, this.baseShape.w, this.baseShape.h, this);
-      } else if (this.baseShape instanceof Tri) {
-        this.shape = new Tri(this.baseShape.x1 + x, this.baseShape.y1 + y, this.baseShape.x2 + x,
-                             this.baseShape.y2 + y, this.baseShape.x3 + x, this.baseShape.y3 + y, this);
-      } else if (this.baseShape instanceof Line) {
-        this.shape = new Line(this.baseShape.x1 + x, this.baseShape.y1 + y, this.baseShape.x2 + x,
-                              this.baseShape.y2 + y, this.baseShape.bounded, this);
-      } else if (this.baseShape instanceof RotRect) {
-        this.shape = new RotRect(this.baseShape.xc + x, this.baseShape.yc + y, this.baseShape.w, this.baseShape.h,
-                                 this.baseShape.a, this);
-      } else if (this.baseShape instanceof Poly) {
-        
-        let ptsX = this.baseShape.ptsX.slice();
-        let ptsY = this.baseShape.ptsY.slice();
-        
-        for (let i in ptsX) {
-          ptsX[i] += x;
-          ptsY[i] += y;
-        }
-        
-        this.shape = new Poly(ptsX, ptsY, this);
-        
-      } else if (this.baseShape instanceof Circle) {
-        this.shape = new Circle(this.baseShape.x + x, this.baseShape.y + y, this.baseShape.r, this);
-      }
-    }
-    
     this.#x = x;
     this.#y = y;
     this.vx = vx;
     this.vy = vy;
+    
+    if (!rotates) {
+      this.shape = this.baseShape.copy();
+      this.shape.parent = this;
+      this.shape.update_to_hitbox(this, false);
+    }
     
     // tracks how much the hitbox has moved so far in this tick (motion_sweep + motion_correct or motion_ground
     // depending on what this hitbox is for), 
@@ -1553,46 +1530,16 @@ class Hitbox {
                  + this.#cosa * (this.baseShape.y - this.baseShape.h / 2 - yc) + yc  + this.#x;
       
       this.shape = new RotRect(rotX, rotY, this.baseShape.w, this.baseShape.h, this.#a, this);
-    } else if (this.baseShape instanceof Tri) {
-      let rotX1 = this.#cosa * (this.baseShape.x1 - xc) - this.#sina * (this.baseShape.y1 - yc) + xc + this.#x;
-      let rotY1 = this.#sina * (this.baseShape.x1 - xc) + this.#cosa * (this.baseShape.y1 - yc) + yc + this.#y;
-      let rotX2 = this.#cosa * (this.baseShape.x2 - xc) - this.#sina * (this.baseShape.y2 - yc) + xc + this.#x;
-      let rotY2 = this.#sina * (this.baseShape.x2 - xc) + this.#cosa * (this.baseShape.y2 - yc) + yc + this.#y;
-      let rotX3 = this.#cosa * (this.baseShape.x3 - xc) - this.#sina * (this.baseShape.y3 - yc) + xc + this.#x;
-      let rotY3 = this.#sina * (this.baseShape.x3 - xc) + this.#cosa * (this.baseShape.y3 - yc) + yc + this.#y;
-      
-      this.shape = new Tri(rotX1, rotY1, rotX2, rotY2, rotX3, rotY3, this);
-    } else if (this.baseShape instanceof Line) {
-      let rotX1 = this.#cosa * (this.baseShape.x1 - xc) - this.#sina * (this.baseShape.y1 - yc) + xc + this.#x;
-      let rotY1 = this.#sina * (this.baseShape.x1 - xc) + this.#cosa * (this.baseShape.y1 - yc) + yc + this.#y;
-      let rotX2 = this.#cosa * (this.baseShape.x2 - xc) - this.#sina * (this.baseShape.y2 - yc) + xc + this.#x;
-      let rotY2 = this.#sina * (this.baseShape.x2 - xc) + this.#cosa * (this.baseShape.y2 - yc) + yc + this.#y;
-      
-      this.shape = new Line(rotX1, rotY1, rotX2, rotY2, this.baseShape.bounded, this);
-    } else if (this.baseShape instanceof RotRect) {
-      let rotX = this.#cosa * (this.baseShape.xc - xc) - this.#sina * (this.baseShape.yc - yc) + xc + this.#x;
-      let rotY = this.#sina * (this.baseShape.xc - xc) + this.#cosa * (this.baseShape.yc - yc) + yc + this.#y;
-      
-      this.shape = new RotRect(rotX, rotY, this.baseShape.w, this.baseShape.h, a + this.baseShape.a, this);
-    } else if (this.baseShape instanceof Poly) {
-      let ptsX = [];
-      let ptsY = [];
-      
-      for (let i in this.baseShape.ptsX) {
-        ptsX.push(this.#cosa * (this.baseShape.ptsX[i] - this.xc) - this.#sina * (this.baseShape.ptsY[i] - this.yc) + this.xc + this.#x)
-        ptsY.push(this.#sina * (this.baseShape.ptsX[i] - this.xc) + this.#cosa * (this.baseShape.ptsY[i] - this.yc) + this.yc + this.#y);
-      }
-      
-      this.shape = new Poly(ptsX, ptsY, this);
-    } else if (this.baseShape instanceof Circle) {
-      // rotating a circle around anything but its center is stupid (linear velocity would simulate it fine),
-      // but maybe might make the implementation of some things easier for somebody, so go wild.
-      let rotX = this.#cosa * (this.baseShape.x - xc) - this.#sina * (this.baseShape.y - yc) + xc + this.#x;
-      let rotY = this.#sina * (this.baseShape.x - xc) + this.#cosa * (this.baseShape.y - yc) + yc + this.#y;
-      this.shape = new Circle(rotx, roty, this.baseShape.r, this);
+    } else {
+      this.shape = this.baseShape.copy();
+      this.shape.parent = this;
+      this.shape.update_to_hitbox(this, false);
     }
   }
   
+  // random note:
+  // rotating a circle around anything but its center is stupid (linear velocity would simulate it fine),
+  // but maybe might make the implementation of some things easier for somebody, so go wild.
   rotate(a) {
     this.#a = a;
     
