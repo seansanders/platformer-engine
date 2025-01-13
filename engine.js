@@ -1,18 +1,28 @@
 // sorry for ugly code
 
-const fuzz = 1/64;
-const fuzzier = 1/256;
-const fuzziest = 1/8192;
+const FUZZ     = 1/64;
+const FUZZIER  = 1/256;
+const FUZZIEST = 1/8192;
+const COLLISION_IGNORE_SAFETY = 1.3;
 
-const tau   = 6.283185307179586476925286766559005768394338798750211641949889184615632;
-const pi    = 3.14159265358979323846264338327950288419716939937510;
+const PI  = Math.PI;
+const TAU = 2 * PI;
 
-var gravity = {"x": 0, "y": 0.5};
-var air     = {"drag": 0.98, "vx": 0, "vy": 0, "swim": false};
+let gravity = {"x": 0, "y": 0.5};
+let air     = {"drag": 0.99, "vx": 0, "vy": 0, "swim": false};
 
-var keysPressed = {"escape": false,"f1": false,"f2": false,"f3": false,"f4": false,"f5": false,"f6": false,"f7": false,"f8": false,"f9": false,"f10": false,"f11": false,"f12": false,"delete": false,"`": false,"1": false,"2": false,"3": false,"4": false,"5": false,"6": false,"7": false,"8": false,"9": false,"0": false,"-": false,"=": false,"backspace": false,"home": false,"~": false,"!": false,"@": false,"#": false,"$": false,"%": false,"^": false,"&": false,"*": false,"(": false,")": false,"_": false,"+": false,"tab": false,"q": false,"w": false,"e": false,"r": false,"t": false,"y": false,"u": false,"i": false,"o": false,"p": false,"[": false,"]": false,"\\": false,"pageup": false,"{": false,"}": false,"|": false,"capslock": false,"a": false,"s": false,"d": false,"f": false,"g": false,"h": false,"j": false,"k": false,"l": false,";": false,"'": false,"enter": false,"pagedown": false,":": false,"\"": false,"shift": false,"z": false,"x": false,"c": false,"v": false,"b": false,"n": false,"m": false,",": false,".": false,"/": false,"end": false,"<": false,">": false,"?": false,"control": false,"alt": false," ": false,"arrowup": false,"arrowleft": false,"arrowdown": false,"arrowright": false}; // only keys on my laptop keyboard, you might want to extend this
+let keysPressed = {"escape": false,"f1": false,"f2": false,"f3": false,"f4": false,"f5": false,"f6": false,"f7": false,"f8": false,"f9": false,"f10": false,"f11": false,"f12": false,"delete": false,"`": false,"1": false,"2": false,"3": false,"4": false,"5": false,"6": false,"7": false,"8": false,"9": false,"0": false,"-": false,"=": false,"backspace": false,"home": false,"~": false,"!": false,"@": false,"#": false,"$": false,"%": false,"^": false,"&": false,"*": false,"(": false,")": false,"_": false,"+": false,"tab": false,"q": false,"w": false,"e": false,"r": false,"t": false,"y": false,"u": false,"i": false,"o": false,"p": false,"[": false,"]": false,"\\": false,"pageup": false,"{": false,"}": false,"|": false,"capslock": false,"a": false,"s": false,"d": false,"f": false,"g": false,"h": false,"j": false,"k": false,"l": false,";": false,"'": false,"enter": false,"pagedown": false,":": false,"\"": false,"shift": false,"z": false,"x": false,"c": false,"v": false,"b": false,"n": false,"m": false,",": false,".": false,"/": false,"end": false,"<": false,">": false,"?": false,"control": false,"alt": false," ": false,"arrowup": false,"arrowleft": false,"arrowdown": false,"arrowright": false}; // only keys on my laptop keyboard, you might want to extend this
 
 const SHIFTED_KEYS = {"`": "~","1": "!","2": "@","3": "#","4": "$","5": "%","6": "^","7": "&","8": "*","9": "(","0": ")","-": "_","=": "+","[": "{","]": "}","\\": "|",";": ":","'": "\"",",": "<",".": ">","": "?"};
+
+const DOM    = 0;
+
+const LINEAR = 0;
+const SMOOTH = 1;
+
+let DEFAULT_COLOR      = "#FFFFFF";
+let DEFAULT_LINE_WIDTH = 1;
+let DEFAULT_FILL       = undefined;
 
 function key_down(key) {
   key = key.toLowerCase();
@@ -29,7 +39,6 @@ function key_up(key) {
   }
 }
 
-// uhh just for mathematical clarity i guess
 function dot(x1, y1, x2, y2) {
   return x1*x2 + y1*y2;
 }
@@ -55,6 +64,13 @@ function len(x1, y1, x2, y2) {
 function normalize(x, y) {
   let l = mag(x, y);
   return l == 0 ? [0, 0] : [x/l, y/l];
+}
+
+// for cases where an arbitrary normal is more harmful than
+// a 0 vector
+function normalize_default(x, y) {
+  let l = mag(x, y);
+  return l == 0 ? [0, 1] : [x/l, y/l];
 }
 
 function proj(ax, ay, px, py) {
@@ -86,6 +102,16 @@ function reject(ax, ay, px, py) {
 function rejectnorm(ax, ay, px, py) {
   let proj = dot(ax, ay, px, py);
   return [ax - (proj * px), ay - (proj * py)];
+}
+
+function sum_mags(...args) {
+  let sum = 0;
+  
+  for (let num of args) {
+    sum += Math.abs(num);
+  }
+  
+  return sum;
 }
 
 function lines_intersect(x11, y11, x12, y12, x21, y21, x22, y22, bounded1, bounded2) {
@@ -265,15 +291,38 @@ function moving_circle_intersect(x1, y1, r1, vx1, vy1, x2, y2, r2, vx2, vy2, bou
   }
 }
 
-// kinda wish i didn't have to make this one ngl
-class Line {
+class Shape {
+  constructor(parent) {
+    this.parent = parent; // the hitbox object that owns/created this shape.
+  }
+  
+  copy() {}
+  
+  get_pts() {}
+  
+  // when sign of direction is unimportant (rects, for example, only need 2)
+  get_norms() {}
+  
+  // when all directions are needed, including direct opposites (rects have 4)
+  get_all_norms() {}
+  
+  get_proj_profile() {}
+  
+  // changeShape: true if the baseShape of the hitbox is not expected to be
+  // (geometrically) similar to this shape in its current form. if false,
+  // allows a little work to be saved, and/or does not change shape to be
+  // similar to baseShape.
+  update_to_hitbox(hitbox, changeShape) {}
+}
+
+class Line extends Shape {
   #nx;
   #ny;
   #nxp;
   #nyp;
   
   constructor (x1, y1, x2, y2, bounded, parent) {
-    this.parent = parent;
+    super(parent);
     this.x1 = x1;
     this.y1 = y1;
     this.x2 = x2;
@@ -281,6 +330,15 @@ class Line {
     this.bounded = bounded;
     
     this.#set_normals(); 
+    
+    this.distCx = (this.x1 + this.x2) / 2;
+    this.distCy = (this.y1 + this.y2) / 2;
+    this.distR = sum_mags(this.x1 - this.x2, this.y1 - this.y2);
+  }
+  
+  
+  copy() {
+    return new Line(this.x1, this.y1, this.x2, this.y2, this.bounded, this.parent);
   }
   
   #set_normals() {
@@ -300,6 +358,10 @@ class Line {
     if ((set1 || set2) && calcNorm) {
       this.#set_normals();
     }
+    
+    this.distCx = (this.x1 + this.x2) / 2;
+    this.distCy = (this.y1 + this.y2) / 2;
+    this.distR = sum_mags(this.x1 - this.x2, this.y1 - this.y2);
   }
   
   intersect_line(x11, y11, x12, y12, bounded) {
@@ -330,22 +392,34 @@ class Line {
   }
   
   get_proj_profile(norm) {
-    let temp;
-    let minpt =  Infinity;
-    let maxpt = -Infinity;
+    let dot1 = dot(this.x1, this.y1, norm.x, norm.y);
+    let dot2 = dot(this.x2, this.y2, norm.x, norm.y);
+
+    return (dot1 > dot2) ? [dot2, dot1] : [dot1, dot2];
+  }
+  
+  update_to_hitbox(hitbox, changeShape) {
+    let base = hitbox.baseShape;
     
-    temp = dot(this.x1, this.y1, norm.x, norm.y);
-    minpt = Math.min(temp, minpt);
-    maxpt = Math.max(temp, maxpt);
-    temp = dot(this.x2, this.y2, norm.x, norm.y);
-    minpt = Math.min(temp, minpt);
-    maxpt = Math.max(temp, maxpt);
-    
-    return [minpt, maxpt];
+    if (base instanceof Line) {
+      if (hitbox.rotates) {
+        let rotX1 = hitbox.cosa * (base.x1 - hitbox.xc) - hitbox.sina * (base.y1 - hitbox.yc) + hitbox.xc + hitbox.x;
+        let rotY1 = hitbox.sina * (base.x1 - hitbox.xc) + hitbox.cosa * (base.y1 - hitbox.yc) + hitbox.yc + hitbox.y;
+        let rotX2 = hitbox.cosa * (base.x2 - hitbox.xc) - hitbox.sina * (base.y2 - hitbox.yc) + hitbox.xc + hitbox.x;
+        let rotY2 = hitbox.sina * (base.x2 - hitbox.xc) + hitbox.cosa * (base.y2 - hitbox.yc) + hitbox.yc + hitbox.y;
+      
+        this.set_pts(true, true, rotX1, rotY1, rotX2, rotY2, true);
+      } else {
+        this.set_pts(true, true, base.x1 + hitbox.x, base.y1 + hitbox.y,
+                     base.x2 + hitbox.x, base.y2 + hitbox.y, changeShape);
+      }
+      
+      if (changeShape) this.bounded = base.bounded;
+    } // else... do nothing because this must have been called by mistake
   }
 }
 
-class Tri {
+class Tri extends Shape {
   #flippedNormals;
   
   #nx1;
@@ -356,7 +430,7 @@ class Tri {
   #ny3;
   
   constructor(x1, y1, x2, y2, x3, y3, parent) {
-    this.parent = parent; // the hitbox object that owns/created this shape.
+    super(parent);
     
     this.x1 = x1;
     this.y1 = y1;
@@ -380,9 +454,14 @@ class Tri {
       this.#ny3 *= -1;
     }
     
+    this.#update_dist_calc_vars();
   }
   
-  set_pts(set1, set2, set3, x1, y1, x2, y2, x3, y3, calcNorms) {
+  copy() {
+    return new Tri(this.x1, this.y1, this.x2, this.y2, this.x3, this.y3, parent);
+  }
+  
+  set_pts(set1, set2, set3, x1, y1, x2, y2, x3, y3, calcNorms, calcDistVars) {
     if (set1) {
       this.x1 = x1;
       this.y1 = y1;
@@ -430,6 +509,7 @@ class Tri {
       }
     }
     
+    if (calcDistVars) this.#update_dist_calc_vars();
   }
   
   intersect_line(x11, y11, x12, y12, bounded) {
@@ -492,16 +572,58 @@ class Tri {
     
     return [minpt, maxpt];
   }
+  
+  #update_dist_calc_vars() {
+    let minX = Math.min(this.x1, this.x2, this.x3);
+    let maxX = Math.max(this.x1, this.x2, this.x3);
+    let minY = Math.min(this.y1, this.y2, this.y3);
+    let maxY = Math.max(this.y1, this.y2, this.y3);
+    
+    this.distCx = (minX + maxX) / 2;
+    this.distCy = (minY + maxY) / 2;
+    this.distR  = maxX - minX + maxY - minY;
+  }
+  
+  update_to_hitbox(hitbox, changeShape) {
+    let base = hitbox.baseShape;
+    
+    if (base instanceof Tri) {
+      if (hitbox.rotates) {
+        let rotX1 = hitbox.cosa * (base.x1 - hitbox.xc) - hitbox.sina * (base.y1 - hitbox.yc) + hitbox.xc + hitbox.x;
+        let rotY1 = hitbox.sina * (base.x1 - hitbox.xc) + hitbox.cosa * (base.y1 - hitbox.yc) + hitbox.yc + hitbox.y;
+        let rotX2 = hitbox.cosa * (base.x2 - hitbox.xc) - hitbox.sina * (base.y2 - hitbox.yc) + hitbox.xc + hitbox.x;
+        let rotY2 = hitbox.sina * (base.x2 - hitbox.xc) + hitbox.cosa * (base.y2 - hitbox.yc) + hitbox.yc + hitbox.y;
+        let rotX3 = hitbox.cosa * (base.x3 - hitbox.xc) - hitbox.sina * (base.y3 - hitbox.yc) + hitbox.xc + hitbox.x;
+        let rotY3 = hitbox.sina * (base.x3 - hitbox.xc) + hitbox.cosa * (base.y3 - hitbox.yc) + hitbox.yc + hitbox.y;
+        
+        this.set_pts(true, true, true, rotX1, rotY1, rotX2, rotY2, rotX3, rotY3, true, false);
+      } else {
+        this.set_pts(true, true, true, base.x1 + hitbox.x, base.y1 + hitbox.y, base.x2 + hitbox.x,
+                     base.y2 + hitbox.y, base.x3 + hitbox.x, base.y3 + hitbox.y, changeShape, false);
+      }
+      
+      this.distCx = base.distCx + hitbox.x;
+      this.distCy = base.distCy + hitbox.y;
+      this.distR  = base.distR;
+    }
+  } // else... do nothing because this must have been called by mistake
 }
 
-class Rect {
+class Rect extends Shape {
   constructor(x, y, w, h, parent) {
-    this.parent = parent;
+    super(parent);
     
+    // x and y are coords of the top left corner
     this.x = x;
     this.y = y;
     this.w = w;
     this.h = h;
+    
+    this.#update_dist_calc_vars();
+  }
+  
+  copy() {
+    return new Rect(this.x, this.y, this.w, this.h);
   }
   
   reset(x, y, w, h) {
@@ -509,16 +631,23 @@ class Rect {
     this.y = y;
     this.w = w;
     this.h = h;
+    
+    this.#update_dist_calc_vars();
   }
   
   resize(w, h) {
     this.w = w;
     this.h = h;
+    
+    this.distR = this.w + this.h;
   }
   
   moveto(x, y) {
     this.x = x;
     this.y = y;
+    
+    this.distCx = this.x + this.w / 2;
+    this.distCy = this.y + this.h / 2;
   }
   
   intersect_line(x11, y11, x12, y12, bounded) {
@@ -582,15 +711,15 @@ class Rect {
   
   get_proj_profile(norm) {
     let temp;
-    let minpt =  Infinity;
-    let maxpt = -Infinity;
+    let minpt;
+    let maxpt;
     
     let xw = this.x + this.w;
     let yh = this.y + this.h;
     
     temp = dot(this.x, this.y, norm.x, norm.y);
-    minpt = Math.min(temp, minpt);
-    maxpt = Math.max(temp, maxpt);
+    minpt = temp;
+    maxpt = temp;
     temp = dot(xw, this.y, norm.x, norm.y);
     minpt = Math.min(temp, minpt);
     maxpt = Math.max(temp, maxpt);
@@ -603,9 +732,28 @@ class Rect {
     
     return [minpt, maxpt];
   }
+  
+  #update_dist_calc_vars() {
+    this.distCx = this.x + this.w / 2;
+    this.distCy = this.y + this.h / 2;
+    this.distR = this.w + this.h;
+  }
+  
+  update_to_hitbox(hitbox, changeShape) {
+    let base = hitbox.baseShape;
+    
+    if (base instanceof Rect && !hitbox.rotates) {
+      // rotating Rect hitboxes must have rotRect shapes
+      if (changeShape) {
+        this.reset(base.x + hitbox.x, base.y + hitbox.y, base.w, base.h);
+      } else {
+        this.moveto(base.x + hitbox.x, base.y + hitbox.y);
+      }
+    }
+  } // else... do nothing because this must have been called by mistake
 }
 
-class RotRect {
+class RotRect extends Shape {
   #x1base;
   #y1base;
   #x2base;
@@ -627,9 +775,9 @@ class RotRect {
   #ny4;
   
   constructor(xc, yc, w, h, a, parent) {
-    // x and y are center points for this fella
-    this.parent = parent;
+    super(parent);
     
+    // x and y are center points for this fella rather than TL corner
     this.xc = xc;
     this.yc = yc;
     this.w = w;
@@ -639,16 +787,23 @@ class RotRect {
     this.#cosa = Math.cos(this.a);
     this.#sina = Math.sin(this.a);
     
-    this.gen_pts();
-    this.gen_norms();
+    this.#gen_pts();
+    this.#gen_norms();
+    
+    this.distCx = this.xc;
+    this.distCy = this.yc;
+    this.distR = this.w + this.h;
   }
   
-  gen_pts() {
+  copy() {
+    return new RotRect(this.xc, this.yc, this.w, this.h, this.a, this.parent);
+  }
+  
+  #gen_pts() {
     let wcosa = this.w * this.#cosa / 2;
     let wsina = this.w * this.#sina / 2;
     let hcosa = this.h * this.#cosa / 2;
     let hsina = this.h * this.#sina / 2;
-    
     
     this.#x1base = -wcosa + hsina;
     this.#y1base = -wsina - hcosa;
@@ -662,7 +817,7 @@ class RotRect {
     this.moveto(this.xc, this.yc);
   }
   
-  gen_norms() {
+  #gen_norms() {
     this.#nx1 =  this.#sina;
     this.#ny1 = -this.#cosa;
     this.#nx2 =  this.#cosa;
@@ -683,8 +838,12 @@ class RotRect {
     this.#cosa = Math.cos(this.a);
     this.#sina = Math.sin(this.a);
     
-    this.gen_pts();
-    this.gen_norms();
+    this.#gen_pts();
+    this.#gen_norms();
+    
+    this.distCx = this.xc;
+    this.distCy = this.yc;
+    this.distR = this.w + this.h;
   }
   
   rotate(a) {
@@ -692,15 +851,16 @@ class RotRect {
     this.#cosa = Math.cos(this.a);
     this.#sina = Math.sin(this.a);
     
-    this.gen_pts();
-    this.gen_norms();
+    this.#gen_pts();
+    this.#gen_norms();
   }
   
   resize(w, h) {
     this.w = w;
     this.h = h;
     
-    gen_pts();
+    this.#gen_pts();
+    this.distR = this.w + this.h;
   }
   
   moveto(xc, yc) {
@@ -714,6 +874,9 @@ class RotRect {
     this.y3 = this.yc + this.#y3base;
     this.x4 = this.xc + this.#x4base;
     this.y4 = this.yc + this.#y4base;
+    
+    this.distCx = this.xc;
+    this.distCy = this.yc;
   }
   
   intersect_line(x11, y11, x12, y12, bounded) {
@@ -772,12 +935,12 @@ class RotRect {
   
   get_proj_profile(norm) {
     let temp;
-    let minpt =  Infinity;
-    let maxpt = -Infinity;
+    let minpt;
+    let maxpt;
     
     temp = dot(this.x1, this.y1, norm.x, norm.y);
-    minpt = Math.min(temp, minpt);
-    maxpt = Math.max(temp, maxpt);
+    minpt = temp;
+    maxpt = temp;
     temp = dot(this.x2, this.y2, norm.x, norm.y);
     minpt = Math.min(temp, minpt);
     maxpt = Math.max(temp, maxpt);
@@ -790,22 +953,66 @@ class RotRect {
     
     return [minpt, maxpt];
   }
+  
+  update_to_hitbox(hitbox, changeShape) {
+    let base = hitbox.baseShape;
+    
+    if (base instanceof Rect) {
+      if (hitbox.rotates) {
+        let rotX =   hitbox.cosa * (base.x + base.w / 2 - hitbox.xc)
+                   - hitbox.sina * (base.y + base.h / 2 - hitbox.yc) + hitbox.xc + hitbox.x;
+        let rotY =   hitbox.sina * (base.x + base.w / 2 - hitbox.xc)
+                   + hitbox.cosa * (base.y + base.h / 2 - hitbox.yc) + hitbox.yc + hitbox.y;
+        
+        if (changeShape) {
+          this.reset(rotX, rotY, base.w, base.h, hitbox.a);
+        } else {
+          this.reset(rotX, rotY, this.w, this.h, hitbox.a);
+        }
+      } else {
+        if (changeShape) {
+          this.reset(base.x + base.w / 2 + hitbox.x, base.y + base.h / 2 + hitbox.y, base.w, base.h, 0);
+        } else {
+          this.reset(base.x + this.w / 2 + hitbox.x, base.y + this.h / 2 + hitbox.y, this.w, this.h, 0);
+        }
+      }
+    } else if (base instanceof RotRect) {
+      let base = hitbox.baseShape;
+      
+      if (hitbox.rotates) {
+        let rotX = hitbox.cosa * (base.xc - hitbox.xc) - hitbox.sina * (base.yc - hitbox.yc) + hitbox.xc + hitbox.x;
+        let rotY = hitbox.sina * (base.xc - hitbox.xc) + hitbox.cosa * (base.yc - hitbox.yc) + hitbox.yc + hitbox.y;
+        
+        if (changeShape) {
+          this.reset(rotX, rotY, base.w, base.h, base.a + hitbox.a);
+        } else {
+          this.reset(rotX, rotY, this.w, this.h, base.a + hitbox.a);
+        }
+      } else {
+        if (changeShape) {
+          this.reset(base.xc + hitbox.x, base.yc + hitbox.y, base.w, base.h, base.a);
+        } else {
+          this.reset(base.xc + hitbox.x, base.yc + hitbox.y, this.w, this.h, base.a);
+        }
+      }
+    }
+  } // else... do nothing because this must have been called by mistake
 }
 
 // it is up to YOU to make sure it is convex and non-intersecting!!
-class Poly {
+class Poly extends Shape {
   #flippedNormals;
   
   #normalsX;
   #normalsY;
   
   constructor(ptsX, ptsY, parent) {
+    super(parent);
+    
     if (ptsX.length != ptsY.length || ptsX.length < 3) {
       console.log("illegal polygon point specification");
       return;
     }
-    
-    this.parent = parent;
     
     this.ptsX = ptsX;
     this.ptsY = ptsY;
@@ -828,14 +1035,28 @@ class Poly {
         this.#normalsY[i] *= -1;
       }
     }
+    
+    this.#update_dist_calc_vars();
+  }
+  
+  copy() {
+    let ptsX = [];
+    let ptsY = [];
+    
+    for (let i = 0; i < len(this.ptsX); i++) {
+      ptsX.push(this.ptsX[i]);
+      ptsY.push(this.ptsY[i]);
+    } 
+    
+    return new Poly(ptsX, ptsY, this.parent);
   }
   
   // can skip this practically on account of the point arrays can be edited from the outside
   // (which should be faster as new input ptsX and ptsY arrays need not be created
   set_pts(ptsX, ptsY, calcNorms) {
   
-    if (ptsSet.length != this.ptsX.length || ptsX.length != this.ptsX.length || ptsY.length != this.ptsY.length) {
-      console.log("illegal polygon point respecification");
+    if (ptsX.length != this.ptsX.length || ptsY.length != this.ptsY.length) {
+      console.log("illegal polygon point respecification (1)");
       return;
     }
   
@@ -845,11 +1066,13 @@ class Poly {
     }
     
     if (calcNorms) {
-      this.recalc_norms(setPts)
+      this.#recalc_norms(setPts)
     }
+    
+    this.#update_dist_calc_vars();
   }
   
-  recalc_norms() {
+  #recalc_norms() {
     for (let i = 0; i < this.ptsX.length; i++) {
       [this.#normalsX[i], this.#normalsY[i]] = normalize(this.ptsY[i] - this.ptsY[(i + 1) % this.ptsX.length],
                                                          this.ptsX[(i + 1) % this.ptsX.length] - this.ptsX[i]);
@@ -902,6 +1125,7 @@ class Poly {
     return norms;
   }
   
+  
   get_all_norms() {
     return this.get_norms();
   }
@@ -919,23 +1143,92 @@ class Poly {
     
     return [minpt, maxpt];
   }
+  
+  #update_dist_calc_vars() {
+    let minX =  Infinity;
+    let maxX = -Infinity;
+    let minY =  Infinity;
+    let maxY = -Infinity;
+    
+    for (let i = 0; i < this.ptsX.length; i++) {
+      minX = Math.min(this.ptsX[i], minX);
+      maxX = Math.max(this.ptsX[i], maxX);
+      minY = Math.min(this.ptsY[i], minY);
+      maxY = Math.max(this.ptsY[i], maxY);
+    }
+    
+    this.distR  = maxX - minX + maxY - minY;
+    this.distCx = (maxX + minX) / 2;
+    this.distCy = (maxY + minY) / 2;
+  }
+  
+  update_to_hitbox(hitbox, changeShape) {
+    let base = hitbox.baseShape;
+    
+    if (base instanceof Poly && base.ptsX.length == this.ptsX.length) {
+      if (base.ptsX.length != this.ptsX.length || base.ptsY.length != this.ptsY.length) {
+        console.log("illegal polygon point respecification (2)");
+        return;
+      }
+      
+      if (hitbox.rotates) {
+        for (let i in base.ptsX) {
+          this.ptsX[i] =   hitbox.cosa * (base.ptsX[i] - hitbox.xc)
+                         - hitbox.sina * (base.ptsY[i] - hitbox.yc) + hitbox.xc + hitbox.x;
+          this.ptsY[i] =   hitbox.sina * (base.ptsX[i] - hitbox.xc)
+                         + hitbox.cosa * (base.ptsY[i] - hitbox.yc) + hitbox.yc + hitbox.y;
+        }
+         
+        this.#recalc_norms();
+        
+        if (changeShape) {
+          this.distR = base.distR;
+        }
+      } else {
+        for (let i in base.ptsX) {
+          this.ptsX[i] = base.ptsX[i] + hitbox.x;
+          this.ptsY[i] = base.ptsY[i] + hitbox.y;
+        }
+        
+        if (changeShape) {
+          this.#recalc_norms();
+          this.distR = base.distR;
+        }
+      }
+      
+      this.distCx = base.distCx + hitbox.x;
+      this.distCy = base.distCy + hitbox.y;
+    }
+  } // else... do nothing because this must have been called by mistake
 }
 
-class Circle {
+class Circle extends Shape {
   constructor(x, y, r, parent) {
+    super(parent);
+    
     this.x = x;
     this.y = y;
     this.r = Math.abs(r);
+    this.distR  = this.r * 2;
+    this.distCx = this.x;
+    this.distCy = this.y;
     this.parent = parent;
+  }
+  
+  copy() {
+    return new Circle(this.x, this.y, this.r, this.parent);
   }
   
   moveto(x, y) {
     this.x = x;
     this.y = y;
+    this.distCx = this.x;
+    this.distCy = this.y;
   }
   
   resize(r) {
     this.r = Math.abs(r);
+    this.distR  = this.r * 2;
   }
   
   closest_pt(pts) {
@@ -963,9 +1256,9 @@ class Circle {
     if (temp != undefined) {
       temp.parent = this.parent;
       
-      let [tempX, tempY] = normalize(temp.x - this.x, temp.y - this.y);
+      let [normX, normY] = normalize(temp.x - this.x, temp.y - this.y);
       
-      temp.norm = {"x": tempX, "y": tempY};
+      temp.norm = {"x": normX, "y": normY};
       pts.push(temp);
     }
     
@@ -982,7 +1275,7 @@ class Circle {
     let pt = this.closest_pt(pts);
     
     if (pt != undefined) {
-      let [normX, normY] = normalize(pt.x - this.x, pt.y - this.y);
+      let [normX, normY] = normalize_default(pt.x - this.x, pt.y - this.y);
       norms.push({"x": normX, "y": normY});
     }
     
@@ -1011,8 +1304,52 @@ class Circle {
     let c = dot(this.x, this.y, norm.x, norm.y);
     return [c - this.r, c + this.r];
   }
+  
+  update_to_hitbox(hitbox, changeShape) {
+    let base = hitbox.baseShape;
+    
+    if (base instanceof Circle) {
+      if (changeShape) this.resize(base.r);
+      
+      if (hitbox.rotates) {
+        let x =   hitbox.cosa * (base.x - hitbox.xc)
+                - hitbox.sina * (base.y - hitbox.yc) + hitbox.xc + hitbox.x;
+        let y =   hitbox.sina * (base.x - hitbox.xc)
+                + hitbox.cosa * (base.y - hitbox.yc) + hitbox.yc + hitbox.y;
+        this.moveto(x, y);
+      } else {
+        this.moveto(base.x + hitbox.x, base.y + hitbox.y);
+      }
+    }
+  } // else... do nothing because this must have been called by mistake
 }
 
+// "distance" is calculated with an extremely simple metric for (hopefully) efficiency
+// (taxicab distance augmented by rotation / movement potential)
+function too_distant_to_collide(hitbox1, hitbox2) {
+  let dist      = sum_mags(hitbox1.shape.distCx - hitbox2.shape.distCx, 
+                           hitbox1.shape.distCy - hitbox2.shape.distCy);
+  let checkDist = sum_mags(hitbox1.shape.distR, hitbox2.shape.distR,
+                           hitbox1.vx - hitbox2.vx, hitbox1.vy - hitbox2.vy);
+  if (hitbox1.rotates) checkDist += sum_mags(hitbox1.xc - hitbox1.baseShape.distCx,
+                                             hitbox1.yc - hitbox1.baseShape.distCy);
+  if (hitbox2.rotates) checkDist += sum_mags(hitbox2.xc - hitbox2.baseShape.distCy,
+                                             hitbox2.yc - hitbox2.baseShape.distCy);
+  
+  
+  // debug
+  /*
+  if (dist > checkDist * COLLISION_IGNORE_SAFETY) {
+    hitbox2.debugDrawColor = "blue";
+    hitbox2.shape.debugDrawColor = "blue";
+  } else {
+    hitbox2.debugDrawColor = "white";
+    hitbox2.shape.debugDrawColor = "white";
+  }
+  */
+  
+  return dist > checkDist * COLLISION_IGNORE_SAFETY;
+}
 
 // TODO ignore_func and collide func might generally need more arguments than these given, determine these in the future
 
@@ -1035,7 +1372,7 @@ function one_way_platform(encountered, caller) {
   
   if (encountered.shape instanceof Circle) {
     if (caller.shape instanceof Circle) {
-      let [tempX, tempY] = normalize(caller.shape.x - encountered.shape.x, caller.shape.y - encountered.shape.y);
+      let [tempX, tempY] = normalize_default(caller.shape.x - encountered.shape.x, caller.shape.y - encountered.shape.y);
       norms = [{"x": tempX, "y": tempY}];
       bothCircles = true;
     } else {
@@ -1076,7 +1413,7 @@ function one_way_platform(encountered, caller) {
   return overlapping;
 }
 
-// a ground collideFunc example
+// a ground collideFunc or supportingFunc example
 function tipping_platform(encountered, caller, norm, vxChange, vyChange, rotContactPt) {
   let k = (encountered.k == undefined) ? 0.1 : encountered.k;
   let callerX = (rotContactPt == undefined) ? caller.x : rotContactPt.x;
@@ -1092,19 +1429,21 @@ function tipping_platform(encountered, caller, norm, vxChange, vyChange, rotCont
 }
 
 
-// a sprite collideFunc example
+// a nonsolid collideFunc example
 function fluid_effect(encountered, caller, overlapResult) {
-  caller.events.push({"type": "fluid", "obj": encountered.parent, "overlap": Math.abs(overlapResult.overlap / overlapResult.width)})
+  caller.events.push({"type": "fluid", "obj": encountered.fluid, "overlap": Math.abs(overlapResult.overlap / overlapResult.width)});
 }
 
-
 class Hitbox {
-  #baseShape;
+  #x;
+  #y;
+  #a;
   #cosa;
   #sina;
   
-  constructor(shape, parent, moves, rotates, x, y, vx, vy, mass, frict, elast,
-              ignoreFunc, collideFunc) {
+  // if rotates is true, set_rot_params MUST be called after constructor before this hitbox is used
+  constructor(shape, parent, moves, rotates, x, y, vx, vy, mass, frict, elast, dragAdjust=1,
+              ignoreFunc, collideFunc, supportingFunc) {
     this.parent = parent;
     this.moves = moves;
     this.rotates = rotates;
@@ -1112,25 +1451,25 @@ class Hitbox {
     // baseShape is saved as a reference for whenever the shape moves or rotates
     // (for fear of cumulative translations/rotations eventually dislocating
     // its points relative to each other)
-    this.#baseShape = shape;
-    this.#baseShape.parent = this; // not necessary but i feel weird not setitng it
+    this.baseShape = shape;
+    this.baseShape.parent = this; // not necessary but i feel weird not setitng it
     
     if (!rotates) {
-      if (this.#baseShape instanceof Rect) {
-        this.shape = new Rect(this.#baseShape.x + x, this.#baseShape.y + y, this.#baseShape.w, this.#baseShape.h, this);
-      } else if (this.#baseShape instanceof Tri) {
-        this.shape = new Tri(this.#baseShape.x1 + x, this.#baseShape.y1 + y, this.#baseShape.x2 + x,
-                             this.#baseShape.y2 + y, this.#baseShape.x3 + x, this.#baseShape.y3 + y, this);
-      } else if (this.#baseShape instanceof Line) {
-        this.shape = new Line(this.#baseShape.x1 + x, this.#baseShape.y1 + y, this.#baseShape.x2 + x,
-                              this.#baseShape.y2 + y, this.#baseShape.bounded, this);
-      } else if (this.#baseShape instanceof RotRect) {
-        this.shape = new RotRect(this.#baseShape.xc + x, this.#baseShape.yc + y, this.#baseShape.w, this.#baseShape.h,
-                                 this.#baseShape.a, this);
-      } else if (this.#baseShape instanceof Poly) {
+      if (this.baseShape instanceof Rect) {
+        this.shape = new Rect(this.baseShape.x + x, this.baseShape.y + y, this.baseShape.w, this.baseShape.h, this);
+      } else if (this.baseShape instanceof Tri) {
+        this.shape = new Tri(this.baseShape.x1 + x, this.baseShape.y1 + y, this.baseShape.x2 + x,
+                             this.baseShape.y2 + y, this.baseShape.x3 + x, this.baseShape.y3 + y, this);
+      } else if (this.baseShape instanceof Line) {
+        this.shape = new Line(this.baseShape.x1 + x, this.baseShape.y1 + y, this.baseShape.x2 + x,
+                              this.baseShape.y2 + y, this.baseShape.bounded, this);
+      } else if (this.baseShape instanceof RotRect) {
+        this.shape = new RotRect(this.baseShape.xc + x, this.baseShape.yc + y, this.baseShape.w, this.baseShape.h,
+                                 this.baseShape.a, this);
+      } else if (this.baseShape instanceof Poly) {
         
-        let ptsX = this.#baseShape.ptsX.slice();
-        let ptsY = this.#baseShape.ptsY.slice();
+        let ptsX = this.baseShape.ptsX.slice();
+        let ptsY = this.baseShape.ptsY.slice();
         
         for (let i in ptsX) {
           ptsX[i] += x;
@@ -1139,13 +1478,13 @@ class Hitbox {
         
         this.shape = new Poly(ptsX, ptsY, this);
         
-      } else if (this.#baseShape instanceof Circle) {
-        this.shape = new Circle(this.#baseShape.x + x, this.#baseShape.y + y, this.#baseShape.r, this);
+      } else if (this.baseShape instanceof Circle) {
+        this.shape = new Circle(this.baseShape.x + x, this.baseShape.y + y, this.baseShape.r, this);
       }
     }
     
-    this.x = x;
-    this.y = y;
+    this.#x = x;
+    this.#y = y;
     this.vx = vx;
     this.vy = vy;
     
@@ -1158,16 +1497,42 @@ class Hitbox {
 
     this.frict = frict; // between 0 = 1, 0 is most friction, 1 least
     this.elast = elast; // between 0 and 1, 1 is bounciest and 0 least bouncy
+    this.dragAdjust = dragAdjust;
     
-    this.ignoreFunc  = ignoreFunc;
-    this.collideFunc = collideFunc;
+    this.ignoreFunc     = ignoreFunc;
+    this.collideFunc    = collideFunc;
+    this.supportingFunc = supportingFunc; // called by objects this hitbox is acting as the ground for
     
-    this.ignoredGround = [];
+    this.ignored           = [];
     this.encounteredGround = [];
-    this.encounteredSprites = [];
+    this.encounteredNonsolids = [];
     this.events = [];
     
     this.onGround = false;
+    
+    // some additional parameters that 
+  }
+  
+  // position and angle must be set through dedicated move/rotate functions
+  // or else they become inconsistent with the shape object and possibly other bad things
+  get x() {
+    return this.#x;
+  }
+  
+  get y() {
+    return this.#y;
+  }
+  
+  get a() {
+    return this.#a;
+  }
+  
+  get cosa() {
+    return this.#cosa;
+  }
+  
+  get sina() {
+    return this.#sina;
   }
   
   set_rot_params(xc, yc, a, va) {
@@ -1175,137 +1540,88 @@ class Hitbox {
     
     this.xc = xc;
     this.yc = yc;
-    this.a = a;
+    this.#a = a;
     this.va = va;
     
     this.#sina = Math.sin(a);
     this.#cosa = Math.cos(a);
     
-    if (this.#baseShape instanceof Rect) {
-      let rotX =   this.#cosa * (this.#baseShape.x - this.#baseShape.w / 2 - xc)
-                 - this.#sina * (this.#baseShape.y - this.#baseShape.h / 2 - yc) + xc  + this.x;
-      let rotY =   this.#sina * (this.#baseShape.x - this.#baseShape.w / 2 - xc)
-                 + this.#cosa * (this.#baseShape.y - this.#baseShape.h / 2 - yc) + yc  + this.x;
+    if (this.baseShape instanceof Rect) {
+      let rotX =   this.#cosa * (this.baseShape.x - this.baseShape.w / 2 - xc)
+                 - this.#sina * (this.baseShape.y - this.baseShape.h / 2 - yc) + xc  + this.#x;
+      let rotY =   this.#sina * (this.baseShape.x - this.baseShape.w / 2 - xc)
+                 + this.#cosa * (this.baseShape.y - this.baseShape.h / 2 - yc) + yc  + this.#x;
       
-      this.shape = new RotRect(rotX, rotY, this.#baseShape.w, this.#baseShape.h, this.a, this);
-    } else if (this.#baseShape instanceof Tri) {
-      let rotX1 = this.#cosa * (this.#baseShape.x1 - xc) - this.#sina * (this.#baseShape.y1 - yc) + xc + this.x;
-      let rotY1 = this.#sina * (this.#baseShape.x1 - xc) + this.#cosa * (this.#baseShape.y1 - yc) + yc + this.y;
-      let rotX2 = this.#cosa * (this.#baseShape.x2 - xc) - this.#sina * (this.#baseShape.y2 - yc) + xc + this.x;
-      let rotY2 = this.#sina * (this.#baseShape.x2 - xc) + this.#cosa * (this.#baseShape.y2 - yc) + yc + this.y;
-      let rotX3 = this.#cosa * (this.#baseShape.x3 - xc) - this.#sina * (this.#baseShape.y3 - yc) + xc + this.x;
-      let rotY3 = this.#sina * (this.#baseShape.x3 - xc) + this.#cosa * (this.#baseShape.y3 - yc) + yc + this.y;
+      this.shape = new RotRect(rotX, rotY, this.baseShape.w, this.baseShape.h, this.#a, this);
+    } else if (this.baseShape instanceof Tri) {
+      let rotX1 = this.#cosa * (this.baseShape.x1 - xc) - this.#sina * (this.baseShape.y1 - yc) + xc + this.#x;
+      let rotY1 = this.#sina * (this.baseShape.x1 - xc) + this.#cosa * (this.baseShape.y1 - yc) + yc + this.#y;
+      let rotX2 = this.#cosa * (this.baseShape.x2 - xc) - this.#sina * (this.baseShape.y2 - yc) + xc + this.#x;
+      let rotY2 = this.#sina * (this.baseShape.x2 - xc) + this.#cosa * (this.baseShape.y2 - yc) + yc + this.#y;
+      let rotX3 = this.#cosa * (this.baseShape.x3 - xc) - this.#sina * (this.baseShape.y3 - yc) + xc + this.#x;
+      let rotY3 = this.#sina * (this.baseShape.x3 - xc) + this.#cosa * (this.baseShape.y3 - yc) + yc + this.#y;
       
       this.shape = new Tri(rotX1, rotY1, rotX2, rotY2, rotX3, rotY3, this);
-    } else if (this.#baseShape instanceof Line) {
-      let rotX1 = this.#cosa * (this.#baseShape.x1 - xc) - this.#sina * (this.#baseShape.y1 - yc) + xc + this.x;
-      let rotY1 = this.#sina * (this.#baseShape.x1 - xc) + this.#cosa * (this.#baseShape.y1 - yc) + yc + this.y;
-      let rotX2 = this.#cosa * (this.#baseShape.x2 - xc) - this.#sina * (this.#baseShape.y2 - yc) + xc + this.x;
-      let rotY2 = this.#sina * (this.#baseShape.x2 - xc) + this.#cosa * (this.#baseShape.y2 - yc) + yc + this.y;
+    } else if (this.baseShape instanceof Line) {
+      let rotX1 = this.#cosa * (this.baseShape.x1 - xc) - this.#sina * (this.baseShape.y1 - yc) + xc + this.#x;
+      let rotY1 = this.#sina * (this.baseShape.x1 - xc) + this.#cosa * (this.baseShape.y1 - yc) + yc + this.#y;
+      let rotX2 = this.#cosa * (this.baseShape.x2 - xc) - this.#sina * (this.baseShape.y2 - yc) + xc + this.#x;
+      let rotY2 = this.#sina * (this.baseShape.x2 - xc) + this.#cosa * (this.baseShape.y2 - yc) + yc + this.#y;
       
-      this.shape = new Line(rotX1, rotY1, rotX2, rotY2, this.#baseShape.bounded, this);
-    } else if (this.#baseShape instanceof RotRect) {
-      let rotX = this.#cosa * (this.#baseShape.xc - xc) - this.#sina * (this.#baseShape.yc - yc) + xc + this.x;
-      let rotY = this.#sina * (this.#baseShape.xc - xc) + this.#cosa * (this.#baseShape.yc - yc) + yc + this.y;
+      this.shape = new Line(rotX1, rotY1, rotX2, rotY2, this.baseShape.bounded, this);
+    } else if (this.baseShape instanceof RotRect) {
+      let rotX = this.#cosa * (this.baseShape.xc - xc) - this.#sina * (this.baseShape.yc - yc) + xc + this.#x;
+      let rotY = this.#sina * (this.baseShape.xc - xc) + this.#cosa * (this.baseShape.yc - yc) + yc + this.#y;
       
-      this.shape = new RotRect(rotX, rotY, this.#baseShape.w, this.#baseShape.h, a + this.#baseShape.a, this);
-    } else if (this.#baseShape instanceof Poly) {
+      this.shape = new RotRect(rotX, rotY, this.baseShape.w, this.baseShape.h, a + this.baseShape.a, this);
+    } else if (this.baseShape instanceof Poly) {
       let ptsX = [];
       let ptsY = [];
       
-      for (let i in this.#baseShape.ptsX) {
-        ptsX.push(this.#cosa * (this.#baseShape.ptsX[i] - this.xc) - this.#sina * (this.#baseShape.ptsY[i] - this.yc) + this.xc + this.x)
-        ptsY.push(this.#sina * (this.#baseShape.ptsX[i] - this.xc) + this.#cosa * (this.#baseShape.ptsY[i] - this.yc) + this.yc + this.y);
+      for (let i in this.baseShape.ptsX) {
+        ptsX.push(this.#cosa * (this.baseShape.ptsX[i] - this.xc) - this.#sina * (this.baseShape.ptsY[i] - this.yc) + this.xc + this.#x)
+        ptsY.push(this.#sina * (this.baseShape.ptsX[i] - this.xc) + this.#cosa * (this.baseShape.ptsY[i] - this.yc) + this.yc + this.#y);
       }
       
       this.shape = new Poly(ptsX, ptsY, this);
-    } else if (this.#baseShape instanceof Circle) {
-      // rotating a circle around anything but its center is stupid so is turned off, use linear velocity for that.
-      // rotating a circle around its center is also useless in every respect but in having a rotational velocity.
-      this.xc = 0;
-      this.yc = 0;
-      this.shape = new Circle(this.#baseShape.x, this.#baseShape.y, this.#baseShape.r, this);
+    } else if (this.baseShape instanceof Circle) {
+      // rotating a circle around anything but its center is stupid (linear velocity would simulate it fine),
+      // but maybe might make the implementation of some things easier for somebody, so go wild.
+      let rotX = this.#cosa * (this.baseShape.x - xc) - this.#sina * (this.baseShape.y - yc) + xc + this.#x;
+      let rotY = this.#sina * (this.baseShape.x - xc) + this.#cosa * (this.baseShape.y - yc) + yc + this.#y;
+      this.shape = new Circle(rotx, roty, this.baseShape.r, this);
     }
   }
   
   rotate(a) {
-    this.a = a;
+    this.#a = a;
     
     this.#sina = Math.sin(a);
     this.#cosa = Math.cos(a);
     
-    if (this.#baseShape instanceof Rect) {
-      let rotX =   this.#cosa * (this.#baseShape.x + this.#baseShape.w / 2 - this.xc)
-                 - this.#sina * (this.#baseShape.y + this.#baseShape.h / 2 - this.yc) + this.xc + this.x;
-      let rotY =   this.#sina * (this.#baseShape.x + this.#baseShape.w / 2 - this.xc)
-                 + this.#cosa * (this.#baseShape.y + this.#baseShape.h / 2 - this.yc) + this.yc + this.y;
-      
-      this.shape.moveto(rotX, rotY);
-      this.shape.rotate(a);
-    } else if (this.#baseShape instanceof Tri) {
-      let rotX1 = this.#cosa * (this.#baseShape.x1 - this.xc) - this.#sina * (this.#baseShape.y1 - this.yc) + this.xc + this.x;
-      let rotY1 = this.#sina * (this.#baseShape.x1 - this.xc) + this.#cosa * (this.#baseShape.y1 - this.yc) + this.yc + this.y;
-      let rotX2 = this.#cosa * (this.#baseShape.x2 - this.xc) - this.#sina * (this.#baseShape.y2 - this.yc) + this.xc + this.x;
-      let rotY2 = this.#sina * (this.#baseShape.x2 - this.xc) + this.#cosa * (this.#baseShape.y2 - this.yc) + this.yc + this.y;
-      let rotX3 = this.#cosa * (this.#baseShape.x3 - this.xc) - this.#sina * (this.#baseShape.y3 - this.yc) + this.xc + this.x;
-      let rotY3 = this.#sina * (this.#baseShape.x3 - this.xc) + this.#cosa * (this.#baseShape.y3 - this.yc) + this.yc + this.y;
-      
-      this.shape.set_pts(true, true, true, rotX1, rotY1, rotX2, rotY2, rotX3, rotY3, true);
-    } else if (this.#baseShape instanceof Line) {
-      let rotX1 = this.#cosa * (this.#baseShape.x1 - this.xc) - this.#sina * (this.#baseShape.y1 - this.yc) + this.xc + this.x;
-      let rotY1 = this.#sina * (this.#baseShape.x1 - this.xc) + this.#cosa * (this.#baseShape.y1 - this.yc) + this.yc + this.y;
-      let rotX2 = this.#cosa * (this.#baseShape.x2 - this.xc) - this.#sina * (this.#baseShape.y2 - this.yc) + this.xc + this.x;
-      let rotY2 = this.#sina * (this.#baseShape.x2 - this.xc) + this.#cosa * (this.#baseShape.y2 - this.yc) + this.yc + this.y;
-      
-      this.shape.set_pts(true, true, rotX1, rotY1, rotX2, rotY2, true);
-    } else if (this.#baseShape instanceof RotRect) {
-      
-      let rotX = this.#cosa * (this.#baseShape.xc - this.xc) - this.#sina * (this.#baseShape.yc - this.yc) + this.xc + this.x;
-      let rotY = this.#sina * (this.#baseShape.xc - this.xc) + this.#cosa * (this.#baseShape.yc - this.yc) + this.yc + this.y;
-      
-      this.shape.moveto(rotX, rotY)
-      this.shape.rotate(this.#baseShape.a + a)
-    } else if (this.#baseShape instanceof Poly) {
-      for (let i in this.#baseShape.ptsX) {
-        this.shape.ptsX[i] = this.#cosa * (this.#baseShape.ptsX[i] - this.xc) - this.#sina * (this.#baseShape.ptsY[i] - this.yc) + this.xc + this.x;
-        this.shape.ptsY[i] = this.#sina * (this.#baseShape.ptsX[i] - this.xc) + this.#cosa * (this.#baseShape.ptsY[i] - this.yc) + this.yc + this.y;
-      }
-        
-      this.shape.recalc_norms();
-    } else if (this.#baseShape instanceof Circle) {
-      this.shape.moveto(this.#baseShape.x + this.x, this.#baseShape.y + this.y);
-    }
+    this.shape.update_to_hitbox(this, false);
   }
   
   moveto(x, y, a) {
-    this.x = x;
-    this.y = y;
+    this.#x = x;
+    this.#y = y;
     
     if (a == undefined) {
-      a = this.a;
+      a = this.#a;
     }
     
     if (this.rotates) {
       this.rotate(a);
     } else {
-      if (this.shape instanceof Rect) {
-        this.shape.moveto(this.#baseShape.x + x, this.#baseShape.y + y);
-      } else if (this.shape instanceof Tri) {
-        this.shape.set_pts(true, true, true, this.#baseShape.x1 + x, this.#baseShape.y1 + y, this.#baseShape.x2 + x,
-                           this.#baseShape.y2 + y, this.#baseShape.x3 + x, this.#baseShape.y3 + y, false);
-      } else if (this.shape instanceof Line) {
-        this.shape.set_pts(true, true, this.#baseShape.x1 + x, this.#baseShape.y1 + y, this.#baseShape.x2 + x,
-                           this.#baseShape.y2 + y, false);
-      } else if (this.shape instanceof RotRect) {
-        this.shape.moveto(this.#baseShape.xc + x, this.#baseShape.yc + y);
-      } else if (this.#baseShape instanceof Poly) {
-        for (let i in this.shape.ptsX) {
-          this.shape.ptsX[i] = this.#baseShape.ptsX[i] + x;
-          this.shape.ptsY[i] = this.#baseShape.ptsY[i] + y;
-        }
-      } else if (this.#baseShape instanceof Circle) {
-        this.shape.moveto(this.#baseShape.x + x, this.#baseShape.y + y);
-      }
+      this.shape.update_to_hitbox(this, false);
+    }
+  }
+  
+  moveby(dx, dy, da) {
+    if (this.#a == undefined || da == undefined) {
+      this.moveto(this.#x + dx, this.#y + dy);
+    } else {
+      this.moveto(this.#x + dx, this.#y + dy, this.#a + da);
     }
   }
   
@@ -1363,9 +1679,9 @@ class Hitbox {
       if (obj instanceof Set || obj instanceof Array) {
         pts.push(...this.get_path_intersections(obj));
       } else if (obj instanceof Hitbox) {
-        if (this.ignoredGround.includes(obj) || this.encounteredGround.includes(obj)) continue;
+        if (this.ignored.includes(obj) || this.encounteredGround.includes(obj)) continue;
         
-        if (obj.moves && (obj.vx != 0 || obj.vy != 0)) {
+        if (obj.moves) {
           let vx = this.vx - obj.vx;
           let vy = this.vy - obj.vy;
           
@@ -1404,12 +1720,15 @@ class Hitbox {
     return pts;
   }
   
-  check_ignores(objs, arr) {
+  check_ignores(objs) {
     for (let obj of objs) {
       if (obj instanceof Set || obj instanceof Array) {
-        pts.push(...this.check_ignores(obj));
+        this.check_ignores(obj);
       } else if (obj instanceof Hitbox) {
-        if (obj.ignoreFunc != undefined && obj.ignoreFunc(obj, this)) this.ignoredGround.push(obj);
+        if ( obj == this || too_distant_to_collide(this, obj) ||
+            (obj.ignoreFunc != undefined && obj.ignoreFunc(obj, this)) ) {
+          this.ignored.push(obj);
+        }
       }
     }
   }
@@ -1421,7 +1740,7 @@ class Hitbox {
   // after the ground moves and rotates
   motion_sweep(objs) {
     this.encounteredGround = [];
-    this.ignoredGround     = [];
+    this.ignored           = [];
     this.check_ignores(objs);
     
     this.onGround       = false;
@@ -1430,10 +1749,9 @@ class Hitbox {
     let stepEncountered    = [];
     let prevNorms          = [];
     
-    
     // extremely small velocities mess up the line intersection math
-    this.vx = (Math.abs(this.vx) < fuzz) ? 0 : this.vx;
-    this.vy = (Math.abs(this.vy) < fuzz) ? 0 : this.vy;
+    this.vx = (Math.abs(this.vx) < FUZZ) ? 0 : this.vx;
+    this.vy = (Math.abs(this.vy) < FUZZ) ? 0 : this.vy;
     
     let finalVx = this.vx;
     let finalVy = this.vy;
@@ -1454,6 +1772,9 @@ class Hitbox {
     this.movedX = 0;
     this.movedY = 0;
     
+    let g = (this.gravity == undefined) ? gravity : this.gravity;
+    let gmag = mag(g.x, g.y);
+    
     while (colliding && iter < 64) {
       let minDistsq = Infinity;
       let minDistPt = undefined;
@@ -1472,10 +1793,10 @@ class Hitbox {
           continue;
         }
         
-        if (pt.ignoreOtherVel) {
-          pt.dot = dot(pt.norm.x, pt.norm.y, this.vx, this.vy);
-        } else {
+        if (other.moves) {
           pt.dot = dot(pt.norm.x, pt.norm.y, this.vx - other.vx, this.vy - other.vy);
+        } else {
+          pt.dot = dot(pt.norm.x, pt.norm.y, this.vx, this.vy);
         }
         
         if (pt.distsq <= minDistsq && pt.dot < 0) {
@@ -1494,7 +1815,7 @@ class Hitbox {
       
       if (minDistPt == undefined) {
         if (!newStep) {
-          this.moveto(this.x + this.vx, this.y + this.vy);
+          this.moveby(this.vx, this.vy);
           this.movedX += this.vx;
           this.movedY += this.vy;
         
@@ -1512,8 +1833,7 @@ class Hitbox {
           finalVx = finalVx - othervx;
           finalVy = finalVy - othervy;
           
-          
-          let rotContactPt;          
+          let rotContactPt;  
           
           // find the rotational velocity of the colliding object- we find a more distant reference
           // point for the rotational velocity at nearly the same distance if possible- this is
@@ -1530,7 +1850,7 @@ class Hitbox {
                 ptOther = pt.generator;
               }
               
-              if (ptOther == other && pt.dot < 0 && pt.distsq <= lastDistsq + fuzzier) {
+              if (ptOther == other && pt.dot < 0 && pt.distsq <= lastDistsq + FUZZIER) {
                 let centerDistsq = lensq(other.xc + other.x, other.yc + other.y, pt.x, pt.y);
                 
                 if (centerDistsq > maxCenterDistsq) {
@@ -1554,7 +1874,11 @@ class Hitbox {
             othervx -= lastPt.norm.y * this.surfaceV; 
             othervy += lastPt.norm.x * this.surfaceV;
           }
-      
+          
+          // adjust friction to be lower (higher value) on steeper slopes
+          let f = this.frict * other.frict;
+          f = (this.slipperyWalls && gmag > 0) ? (1 - (1 - f) * Math.abs(dot(g.x, g.y, lastPt.norm.x, lastPt.norm.y) / gmag)) : f ;
+          
           // adjust this hitbox's final velocity based on ground object's + our
           // friction and elasticity- we do this calculation in the ground object's
           // velocity reference frame- based on its linear velocity, rotational velocity at the collision
@@ -1563,9 +1887,9 @@ class Hitbox {
           // friction + elasticity effects are not applied to the velocity we are actually
           // moving by in this motion_sweep call, only the velocity we will end up with at the end
           let [projx, projy] = projnorm(finalVx, finalVy, lastPt.norm.x, lastPt.norm.y);
-          finalVx = (finalVx - projx) * this.frict * other.frict;
+          finalVx = (finalVx - projx) * f;
           finalVx -= (this.elast + other.elast) * projx / 2;
-          finalVy = (finalVy - projy) * this.frict * other.frict;
+          finalVy = (finalVy - projy) * f;
           finalVy -= (this.elast + other.elast) * projy / 2;
            
           finalVx += othervx;
@@ -1574,13 +1898,7 @@ class Hitbox {
           // determine object we are "standing on" (object we collided with whose surface norm
           // was most directly opposed to gravity), save information about it to, for example,
           // determine movement parameters
-          let gravDotNorm;
-          
-          if (this.gravity == undefined) {
-            gravDotNorm = dot(lastPt.norm.x, lastPt.norm.y, gravity.x, gravity.y);
-          } else {
-            gravDotNorm = dot(lastPt.norm.x, lastPt.norm.y, this.gravity.x, this.gravity.y);
-          }
+          let gravDotNorm = dot(lastPt.norm.x, lastPt.norm.y, g.x, g.y);
           
           if (gravDotNorm < this.minGravDotNorm) {
             this.minGravDotNorm = gravDotNorm;
@@ -1624,8 +1942,8 @@ class Hitbox {
         stepEncountered.push(other);
       }
       
-      let pushX = minDistPt.norm.x * fuzz;
-      let pushY = minDistPt.norm.y * fuzz;
+      let pushX = minDistPt.norm.x * FUZZ;
+      let pushY = minDistPt.norm.y * FUZZ;
       
       let stepVx;
       let stepVy;
@@ -1652,9 +1970,9 @@ class Hitbox {
       let opposedNorm;
       
       for (let norm of prevNorms) {
-        let theDot = dot(minDistPt.norm.x, minDistPt.norm.y, norm.x, norm.y)
+        let opposition = dot(minDistPt.norm.x, minDistPt.norm.y, norm.x, norm.y)
         
-        if (theDot < 0 && theDot > -0.99) {
+        if (opposition < 0 && opposition > -0.99) {
           opposedNorms = true;
           opposedNorm = norm;
           break;
@@ -1674,8 +1992,8 @@ class Hitbox {
       stepVx += pushX;
       stepVy += pushY;
       
-      this.vx = Math.abs(stepVx) < fuzzier ? 0 : stepVx;
-      this.vy = Math.abs(stepVy) < fuzzier ? 0 : stepVy;
+      this.vx = Math.abs(stepVx) < FUZZIER ? 0 : stepVx;
+      this.vy = Math.abs(stepVy) < FUZZIER ? 0 : stepVy;
       
       if (opposedNorms) {
         // if there has been an encountered norm opposed to the colliding surface's norm,
@@ -1696,7 +2014,7 @@ class Hitbox {
     
     // move by the final remaining velocity- this must be done because
     // the position update in the loop only occurs when an object has actually been encountered.
-    this.moveto(this.x + this.vx, this.y + this.vy);
+    this.moveby(this.vx, this.vy);
     
     this.vx = finalVx;
     this.vy = finalVy;
@@ -1718,16 +2036,16 @@ class Hitbox {
     
     for (let obj of objs) {
       if (obj instanceof Set || obj instanceof Array) {
-        pts.push(...this.get_overlaps(obj, crushLogic));
+        results.push(...this.get_overlaps(obj, crushLogic));
       } else if (obj instanceof Hitbox) {
-        if (this.ignoredGround.includes(obj) || this.encounteredGround.includes(obj)
-            || this.encounteredSprites.includes(obj)) continue;
+        if (this.ignored.includes(obj) || this.encounteredGround.includes(obj)
+            || this.encounteredNonsolids.includes(obj)) continue;
         
         let norms;
         
         if (obj.shape instanceof Circle) {
           if (this.shape instanceof Circle) {
-            let [tempX, tempY] = normalize(this.shape.x - obj.shape.x, this.shape.y - obj.shape.y);
+            let [tempX, tempY] = normalize_default(this.shape.x - obj.shape.x, this.shape.y - obj.shape.y);
             norms = [{"x": tempX, "y": tempY}];
           } else {
             norms = obj.shape.get_norms(this.shape.get_pts());
@@ -1738,7 +2056,6 @@ class Hitbox {
           
           if (this.shape instanceof Circle) {
             norms.push(...this.shape.get_norms(obj.shape.get_pts()));
-            console.log("fie",norms);
           } else if (!(this.shape instanceof Rect && obj.shape instanceof Rect)) {
             norms.push(...this.shape.get_norms());
           }
@@ -1750,18 +2067,20 @@ class Hitbox {
         let minNorm;
         let minOverlap = 0;
         let overlapping = true;
-        let savedMymax, savedMymin;
+        let savedMymax, savedMymin, savedSign;
                 
         for (let norm of norms) {
           let [mymin, mymax, v] = this.get_proj_profile(norm, obj.movedX, obj.movedY);
           let [objmin, objmax] = obj.get_proj_profile(norm);
           
           let overlap = 0;
+          let sign = 0;
           
           // crush only if every norm results in crush, of course
           // no overlap if we break
           // go with min overlap otherwise
-          if ((mymax < objmin) || (mymin > objmax)) {
+          // overlap of 0 is no overlap to prevent Problems
+          if ((mymax <= objmin) || (mymin >= objmax)) {
             // ttoo || oott
             
             result.crush = false;
@@ -1775,7 +2094,10 @@ class Hitbox {
               // object fully contains this hitbox (crush)
               // otto
               
-              overlap = crushLogic ? Infinity : mymax - mymin;
+              // velocity biases the determination of which direction
+              // this hitbox should be pushed (likely you need to be pushed opposite your velocity
+              // because your velocity put you in the situation)
+              overlap = crushLogic ? Infinity : ((objmax - mymin + v > mymax - objmin) ? objmin - mymax : objmax - mymin);
             } else {
               // otot
               
@@ -1789,15 +2111,8 @@ class Hitbox {
               // this hitbox fully contains object
               // toot
               
-              if (v > 0) {
-                overlap = objmin - mymax;
-              } else {
-                overlap = objmax - mymin;
-              } if (objmin - mymin > mymax - objmax) {
-                overlap = objmin - mymax;
-              } else {
-                overlap = objmax - mymin;
-              }
+              // see otto for use of v
+              overlap = ((objmax - mymin + v > mymax - objmin) ? objmin - mymax : objmax - mymin);
             } else {
               // toto
               
@@ -1815,6 +2130,7 @@ class Hitbox {
             minOverlap = overlap;
             savedMymax = mymax;
             savedMymin = mymin;
+            savedSign = sign;
           }
           
         }
@@ -1824,6 +2140,7 @@ class Hitbox {
           result.overlap = minOverlap;
           result.compDist = minCompDist;
           result.width = savedMymax - savedMymin;
+          //result.sign = savedSign; // we need to save this instead of sign of overlap in case overlap is 0. sigh.
           
           results.push(result);
         }
@@ -1841,12 +2158,12 @@ class Hitbox {
       this.movedY = this.vy;
       
       if (this.rotates) {
-        this.moveto(this.x + this.vx, this.y + this.vy, this.a + this.va);
+        this.moveby(this.vx, this.vy, this.va);
       } else {
-        this.moveto(this.x + this.vx, this.y + this.vy);
+        this.moveby(this.vx, this.vy);
       }
     } else if (this.rotates) {
-      this.rotate(this.a + this.va)
+      this.rotate(this.#a + this.va)
     }
     
   }
@@ -1865,18 +2182,23 @@ class Hitbox {
     this.encounteredGround = [];
     let prevNorms = [];
     
-    let overlaps = this.get_overlaps(objs, true);
+    let overlaps = this.get_overlaps(objs, false);
     let iter = 0;
+    
+    let g = (this.gravity == undefined) ? gravity : this.gravity;
+    let gmag = mag(g.x, g.y);
     
     while (overlaps.length > 0 && iter < 64) {
       let maxCompDist = -Infinity;
       let maxResult = undefined;
       
       for (let result of overlaps) {
+        /*
         if (result.crush) {
           this.encounteredGround.push(result.obj);
           continue;
         }
+        */
         
         if (result.compDist >= maxCompDist) {
           maxResult = result;
@@ -1889,13 +2211,13 @@ class Hitbox {
       
       // object that crushes (fully contains) this hitbox can't push us out, but don't stop here-
       // maybe another object will push us out of this one
-      if (maxResult.crush) continue;
+      //if (maxResult.crush) continue;
        
       let other = maxResult.obj;
       let norm = maxResult.norm;
       
-      let transX = (maxResult.overlap + fuzz * Math.sign(maxResult.overlap)) * norm.x;
-      let transY = (maxResult.overlap + fuzz * Math.sign(maxResult.overlap)) * norm.y;
+      let transX = (maxResult.overlap + FUZZ * Math.sign(maxResult.overlap)) * norm.x;
+      let transY = (maxResult.overlap + FUZZ * Math.sign(maxResult.overlap)) * norm.y;
       
       norm.x *= Math.sign(maxResult.overlap);
       norm.y *= Math.sign(maxResult.overlap);
@@ -1923,9 +2245,9 @@ class Hitbox {
         // object- very directly opposed norms are excluded above because this would create a translation
         // vector of very very great or infinite length
         [transX, transY] = reverse_proj(transX, transY, opposedNorm.y, -opposedNorm.x);
-        this.moveto(this.x + transX, this.y + transY);
+        this.moveby(transX, transY);
       } else {
-        this.moveto(this.x + transX, this.y + transY);
+        this.moveby(transX, transY);
       }
       
       this.movedX += transX;
@@ -1957,7 +2279,7 @@ class Hitbox {
           }  
               
           for (let pt of pts) {
-            if (pt.distsq <= minDistSq + fuzzier) {
+            if (pt.distsq <= minDistSq + FUZZIER) {
               let centerDistsq = lensq(other.xc + other.x, other.yc + other.y, pt.x, pt.y);
               
               if (centerDistsq > maxCenterDistsq) {
@@ -1987,6 +2309,10 @@ class Hitbox {
         let startVx = this.vx;
         let startVy = this.vy;
         
+        // adjust friction to be lower (higher value) on steeper slopes
+        let f = this.frict * other.frict;
+        f = (this.slipperyWalls && gmag > 0) ? (1 - (1 - f) * Math.abs(dot(g.x, g.y, norm.x, norm.y) / gmag)) : f;
+        
         // adjust this hitbox's velocity based on ground object's + our
         // friction and elasticity- we do this calculation in the ground object's
         // velocity reference frame- based on its linear velocity, rotational velocity at the collision
@@ -1995,9 +2321,9 @@ class Hitbox {
         this.vy -= othervy;
         
         let [projx, projy] = projnorm(this.vx, this.vy, norm.x, norm.y);
-        this.vx = (finalVx - projx) * this.frict * other.frict;
+        this.vx = (finalVx - projx) * f;
         this.vx -= (this.elast + other.elast) * projx / 2;
-        this.vy = (finalVy - projy) * this.frict * other.frict;
+        this.vy = (finalVy - projy) * f;
         this.vy -= (this.elast + other.elast) * projy / 2;
          
         this.vx += othervx;
@@ -2028,23 +2354,24 @@ class Hitbox {
         }
       }
       
-      overlaps = this.get_overlaps(objs, true);
+      overlaps = this.get_overlaps(objs, false);
       iter++;
     }
     
     this.encounteredGround = [];
     
     // if this step failed to remove us from all ground, this hitbox is being crushed
-    overlaps = this.get_overlaps(objs, true);
+    overlaps = this.get_overlaps(objs, false);
     if (overlaps.length > 0) this.events.push("crush");
   }
   
-  // note: fluids in the environment are implemented as sprites. "sprites" basically
-  // means "nonsolids"
-  sprite_collide(sprites) {
-    this.encounteredSprites = [];
+  // note: fluids in the environment are implemented as nonsolids
+  nonsolid_collide(nonsolids) {
+    this.encounteredNonsolids = [];
+    this.ignores              = [];
+    this.check_ignores(nonsolids);
     
-    let results = this.get_overlaps(sprites, false);
+    let results = this.get_overlaps(nonsolids, false);
     
     for (let result of results) {
       if (result.obj.collideFunc != undefined) {
@@ -2052,5 +2379,229 @@ class Hitbox {
       }
     }
     
+  }
+}
+
+class Camera {
+  #posMode;
+  #scaleMode;
+  #aMode;
+  
+  #targetX;
+  #targetY;
+  #targetScale;
+  #targetA;
+  #posDurTotal;
+  #posDurRemaining;
+  #scaleDurTotal;
+  #scaleDurRemaining;
+  #aDurTotal;
+  #aDurRemaining;
+  
+  constructor(x, y, w, h, scale, a) {
+    this.x = x;
+    this.y = y;
+    this.w = w;         // width and height of view
+    this.h = h;
+    this.scale = scale; // scaling of view units relative to game units
+    this.a = a == undefined ? 0 : a // camera's angle is considered ccw (so view angle changes cw)
+    
+    this.#posMode   = LINEAR;
+    this.#scaleMode = LINEAR;
+    this.#aMode     = LINEAR;
+    
+    this.#targetX = x;
+    this.#targetY = y;
+    this.#targetScale = scale;
+    this.#targetA = a;
+  
+    this.#posDurTotal       = 0;
+    this.#posDurRemaining   = 0;
+    this.#scaleDurTotal     = 0;
+    this.#scaleDurRemaining = 0;
+    this.#aDurTotal         = 0;
+    this.#aDurRemaining     = 0;
+  }
+  
+  set_pos_target(x, y, dur, mode) {
+    this.#targetX = x;
+    this.#targetY = y;
+    this.#posDurTotal     = dur;
+    this.#posDurRemaining = dur;
+    this.#posMode = mode;
+  }
+  
+  set_scale_target(scale, dur, mode) {
+    this.#targetScale = scale;
+    this.#scaleDurTotal     = dur;
+    this.#scaleDurRemaining = dur;
+    this.#scaleMode = mode;
+  }
+  
+  set_a_target(a, dur, mode) {
+    this.#targetA = a;
+    this.#aDurTotal     = dur;
+    this.#aDurRemaining = dur;
+    this.#aMode = mode;
+  }
+  
+  clear_pos_target() {
+    this.#targetX = this.x;
+    this.#targetY = this.y;
+    this.#posDurRemaining = 0;
+  }
+  
+  clear_scale_target() {
+    this.#targetScale = this.scale;
+    this.#scaleDurRemaining = 0;
+  }
+  
+  clear_a_target() {
+    this.#targetA = this.a;
+    this.#aDurRemaining = 0;
+  }
+  
+  update() {
+    if (this.#posDurRemaining > 1) {
+      if (this.#posMode == LINEAR) {
+        this.x += (this.#targetX - this.x) / this.#posDurRemaining;
+        this.y += (this.#targetY - this.y) / this.#posDurRemaining;
+        
+      } else if (this.#posMode == SMOOTH) {
+        let progress = (this.#posDurTotal - this.#posDurRemaining) / this.#posDurTotal;
+        let sin = Math.sin(progress * PI) * PI / this.#posDurTotal;
+        let cos = Math.cos(progress * PI);
+        this.x += sin * (this.#targetX - this.x) / (1 + cos);
+        this.y += sin * (this.#targetY - this.y) / (1 + cos);
+      }
+      
+      this.#posDurRemaining -= 1;
+      
+    } else if (this.#posDurRemaining == 1) {
+      this.x = this.#targetX;
+      this.y = this.#targetY;
+      this.#posDurRemaining = 0;
+    }
+    
+    if (this.#scaleDurRemaining > 1) {
+      if (this.#scaleMode == LINEAR) {
+        this.scale += (this.#targetScale - this.scale) / this.#scaleDurRemaining;
+      } else if (this.#scaleMode == SMOOTH) {
+        let progress = (this.#scaleDurTotal - this.#scaleDurRemaining) / this.#scaleDurTotal;
+        let sin = Math.sin(progress * PI) * PI / this.#scaleDurTotal;
+        let cos = Math.cos(progress * PI);
+        this.scale += sin * (this.#targetScale - this.scale) / (1 + cos);
+      }
+      
+      this.#scaleDurRemaining -= 1;
+    
+    } else {
+      this.scale = this.#targetScale;
+      this.#scaleDurRemaining = 0;
+    }
+    
+    if (this.#aDurRemaining > 1) {
+      if (this.#aMode == LINEAR) {
+        this.a += (this.#targetA - this.a) / this.#aDurRemaining;
+      } else if (this.#aMode == SMOOTH) {
+        let progress = (this.#aDurTotal - this.#aDurRemaining) / this.#aDurTotal;
+        let sin = Math.sin(progress * PI) * PI / this.#aDurTotal;
+        let cos = Math.cos(progress * PI);
+        this.a += sin * (this.#targetA - this.a) / (1 + cos);
+      }
+      
+      this.#aDurRemaining -= 1;
+    
+    } else if (this.#aDurRemaining == 1) {
+      this.a = this.#targetA;
+      this.#aDurRemaining = 0;
+    }
+  }
+}
+
+function debug_draw(shapes, cam, ctx) {
+  for (let shape of shapes) {
+    if (shape instanceof Array || shape instanceof Set) {
+      debug_draw(shape, cam, ctx);
+    } else if (shape instanceof Shape) {
+      debug_draw_shape(shape, cam, ctx)
+    } else if (shape.shape != undefined) {
+      debug_draw_shape(shape.shape, cam, ctx);
+    } else if (shape.hitbox != undefined && shape.hitbox.shape != undefined) {
+      debug_draw_shape(shape.hitbox.shape, cam, ctx);
+    }
+  }
+}
+
+function debug_draw_shape(shape, cam, ctx) {
+
+  function cam_pos(x, y) {
+    if (cam.a == 0) {
+      return [cam.w / 2 + (cam.scale * (x - cam.x)), cam.h / 2 + (cam.scale * (y - cam.y))];
+    } else {
+      let cosa = Math.cos(cam.a);
+      let sina = Math.sin(cam.a);
+      x = (cam.scale * (x - cam.x));
+      y = (cam.scale * (y - cam.y));
+      return [cam.w / 2 + cosa * x - sina * y, cam.h / 2 + sina * x + cosa * y];
+    }
+  }
+  
+  ctx.strokeStyle = (shape.parent && shape.parent.debugDrawColor) ? shape.parent.debugDrawColor : DEFAULT_COLOR;
+  ctx.lineWidth   = (shape.parent && shape.parent.debugLineWidth) ? shape.parent.debugLineWidth : DEFAULT_LINE_WIDTH;
+  let fill        = (shape.parent && shape.parent.debugDrawFill)  ? shape.parent.debugDrawFill  : DEFAULT_FILL;
+  
+  
+  if (shape instanceof Line) {
+    ctx.beginPath();
+    ctx.moveTo(...cam_pos(shape.x1, shape.y1));
+    ctx.lineTo(...cam_pos(shape.x2, shape.y2));
+  } else if (shape instanceof Tri) {
+    ctx.beginPath();
+    ctx.moveTo(...cam_pos(shape.x1, shape.y1));
+    ctx.lineTo(...cam_pos(shape.x2, shape.y2));
+    ctx.lineTo(...cam_pos(shape.x3, shape.y3));
+    ctx.lineTo(...cam_pos(shape.x1, shape.y1));
+  } else if (shape instanceof Rect) {
+    ctx.beginPath();
+    ctx.moveTo(...cam_pos(shape.x,           shape.y));
+    ctx.lineTo(...cam_pos(shape.x + shape.w, shape.y));
+    ctx.lineTo(...cam_pos(shape.x + shape.w, shape.y + shape.h));
+    ctx.lineTo(...cam_pos(shape.x,           shape.y + shape.h));
+    ctx.lineTo(...cam_pos(shape.x,           shape.y));
+  } else if (shape instanceof RotRect) {
+    ctx.beginPath();
+    ctx.moveTo(...cam_pos(shape.x1, shape.y1));
+    ctx.lineTo(...cam_pos(shape.x2, shape.y2));
+    ctx.lineTo(...cam_pos(shape.x3, shape.y3));
+    ctx.lineTo(...cam_pos(shape.x4, shape.y4));
+    ctx.lineTo(...cam_pos(shape.x1, shape.y1));
+  } else if (shape instanceof Poly) {
+    ctx.beginPath();
+          
+    ctx.moveTo(...cam_pos(shape.ptsX[0], shape.ptsY[0]));
+          
+    for (let i = 0; i < shape.ptsX.length; i++) {
+      ctx.lineTo(...cam_pos(shape.ptsX[i], shape.ptsY[i]));
+    }
+          
+    ctx.lineTo(...cam_pos(shape.ptsX[0], shape.ptsY[0]));
+  } else if (shape instanceof Circle) {
+    ctx.beginPath();
+    ctx.arc(...cam_pos(shape.x, shape.y), shape.r * cam.scale, 0, TAU);
+    ctx.stroke();
+  }
+  
+  if (fill != undefined) {
+    ctx.fillStyle = fill;
+    ctx.fill();
+  }
+  
+  ctx.stroke();
+        
+  if (shape.parent != undefined && shape.parent.rotates) {
+    ctx.beginPath();
+    ctx.arc(...cam_pos(shape.parent.xc + shape.parent.x, shape.parent.yc + shape.parent.y), 2, 0, TAU);
+    ctx.stroke();
   }
 }

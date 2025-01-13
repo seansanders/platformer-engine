@@ -10,155 +10,157 @@
       body {
           background-color: rgb(0, 0, 0);
           color: rgb(255, 255, 255);
-          text-align: center;
       }
     </style>
     
     <script src="engine.js" type="text/javascript"></script>
     
     <script type="text/javascript">
-      var fps = 60;
-      var d;
+      let fps = 60;
+      let d;
+      let cam;
+      let h;
       
-      function draw(shape, d, color, fill) {
-        if (shape.parent.ignoreFunc != undefined) color = "blue";
-        if (shape.parent.collideFunc != undefined && !fill) color = "green";
-        if (shape.parent.surfaceV != undefined) color = "purple";
+      function box_effect_solid(encountered, caller, norm, vxChange, vyChange, rotContactPt) {
+        // safer to ignore tangental momentum transfer with how unphysical this logic is right now
+        let [vnx, vny] = projnorm(vxChange, vyChange, norm.x, norm.y);
+        let ratio = caller.mass / encountered.mass;
         
-        d.strokeStyle = color;
-        d.lineWidth = 1;
+        ratio = ratio > 2 ? 2 : ratio;
+        encountered.events.push({"type": "vel", "vx": -vnx * ratio, "vy": -vny * ratio});
+      }
+     
+      function box_effect_nonsolid(encountered, caller, overlapResult) {
+        let ratio = caller.mass / encountered.mass;
+        let norm = overlapResult.norm;
+        let overlap = overlapResult.overlap;
+        let cR = (encountered.elast + caller.elast) / 2;
+        let ve = dot(encountered.vx, encountered.vy, norm.x, norm.y);
+        let vc = dot(caller.vx, caller.vy, norm.x, norm.y);
         
-        if (shape instanceof Line) {
-          d.beginPath();
-          d.moveTo(shape.x1, shape.y1);
-          d.lineTo(shape.x2, shape.y2);
-        } else if (shape instanceof Tri) {
-          d.beginPath();
-          d.moveTo(shape.x1, shape.y1);
-          d.lineTo(shape.x2, shape.y2);
-          d.lineTo(shape.x3, shape.y3);
-          d.lineTo(shape.x1, shape.y1);
-        } else if (shape instanceof Rect) {
-          d.beginPath();
-          d.moveTo(shape.x, shape.y);
-          d.lineTo(shape.x + shape.w, shape.y);
-          d.lineTo(shape.x + shape.w, shape.y + shape.h);
-          d.lineTo(shape.x, shape.y + shape.h);
-          d.lineTo(shape.x, shape.y);
-        } else if (shape instanceof RotRect) {
-          d.beginPath();
-          d.moveTo(shape.x1, shape.y1);
-          d.lineTo(shape.x2, shape.y2);
-          d.lineTo(shape.x3, shape.y3);
-          d.lineTo(shape.x4, shape.y4);
-          d.lineTo(shape.x1, shape.y1);
-        } else if (shape instanceof Poly) {
-          d.beginPath();
-          
-          d.moveTo(shape.ptsX[0], shape.ptsY[0]);
-          
-          for (let i = 0; i < shape.ptsX.length; i++) {
-            d.lineTo(shape.ptsX[i], shape.ptsY[i]);
-          }
-          
-          d.lineTo(shape.ptsX[0], shape.ptsY[0]);
-        } else if (shape instanceof Circle) {
-          d.beginPath();
-          d.arc(shape.x, shape.y, shape.r, 0, tau);
-          d.stroke();
-        }
+        let dv = ve - vc;
+        let summ = encountered.mass + caller.mass;
+        let mevemcvc = encountered.mass * ve + caller.mass * vc;
         
-        if (fill) {
-          d.fillStyle = color;
-          d.fill();
+        let vef = (-cR * caller.mass * dv + mevemcvc) / summ;
+        let vcf = (cR * encountered.mass * dv + mevemcvc) / summ;
+        
+        // basically: we are trying to use proper momentum-based collision math unless that would be insufficient to
+        // stop the box from intersecting with the other object, which to be honest may be most of the time
+        if (Math.abs(vcf - vc) > Math.abs(overlapResult.overlap) + FUZZ) {
+          encountered.events.push({"type": "vel", "vx": norm.x * (vef - ve), "vy": norm.y * (vef - ve)})
+          caller.events.push({"type": "vel", "vx": norm.x * (vcf - vc), "vy": norm.y * (vcf - vc)});
         } else {
-          d.stroke();
-        }
-        
-        if (shape.parent.rotates) {
-          d.beginPath();
-          d.arc(shape.parent.xc + shape.parent.x, shape.parent.yc + shape.parent.y, 2, 0, tau);
-          d.stroke();
+          caller.events.push({"type": "vel", "vx": overlapResult.norm.x * (overlapResult.overlap + FUZZ), "vy": (overlapResult.norm.y + FUZZ) * overlapResult.overlap})
+          
+          let temp = Math.min(2, ratio)
+          encountered.events.push({"type": "vel", "vx": -overlapResult.norm.x * temp * overlapResult.overlap, "vy": -overlapResult.norm.y * temp * overlapResult.overlap})
         }
       }
       
       function game() {
-        var shapes = [new Hitbox(new Rect(0, 0, 240, 60), undefined, false, true, 0, 270, 0, 0, 20, 0.8, 0.5, undefined, tipping_platform), new Hitbox(new Rect(0, 200, 240, 60), undefined, false, false, 240, 70, 0, 0, 0, 0.8, 0), new Hitbox(new Tri(250, 140, 300, 200, 350, 140), undefined, false, false, 0, 70, 0, 0, 0, 0.9, 0), new Hitbox(new Rect(0, 100, 100, 200), undefined, false, false, 0, 70, 0, 0, 0, 0.5, 1), new Hitbox(new Tri(400, 200, 430, 140, 460, 200), undefined, false, false, 0, 70, 0, 0, 0, 0.1, 0), new Hitbox(new Line(0, 0, 480, 0, true), undefined, false, false, 0, 0, 0, 0, 0, 1, 0), new Hitbox(new Line(480, 0, 480, 360, true), undefined, false, false, 0, 0, 0, 0, 0, 1, 0), new Hitbox(new Line(0, 360, 0, 0, true), undefined, false, false, 0, 0, 0, 0, 0, 1, 0), new Hitbox(new Circle(0, 0, 25), undefined, false, false, 230, 110, 0, 0, 1, 0.8, 0)];
+        cam = new Camera(240, 180, 480, 360, 1);
+        let stopped = false;
         
-        var hr = new Hitbox(new Rect(7, 0, 15, 38), undefined, true, false, 200, 5, 0, 0, 0.000503, 1, 0);
-        var hc = new Hitbox(new Circle(0, 0, 10), undefined, true, false, 200, 15, 0, 0, 0.000503, 1, 0);
-        
-        var h = hr;
-        
-        var dead = false;
-        
-        shapes[4].surfaceV = 2;
-        
-        var mover = new Hitbox(new RotRect(0, 0, 50, 25, pi/12), undefined, true, false, 270, 110, 0, 0, 0, 0.5, 0.05);
-        var rotor = new Hitbox(new RotRect(0, 0, 50, 25, 0), undefined, false, true, 100, 90, 0, 0, 0, 0.5, 0, one_way_platform);
-        rotor.set_rot_params(5, 0, 0, 0.005);
-        shapes.push(mover);
-        
+        let shapes = [new Hitbox(new Rect(0, 0, 240, 60), undefined, false, true, 0, 270, 0, 0, 20, 0.8, 0.5, 1, undefined, tipping_platform, tipping_platform),
+                      new Hitbox(new Rect(0, 200, 240, 60), undefined, false, false, 240, 70, 0, 0, 0, 0.8, 0),
+                      new Hitbox(new Tri(250, 140, 300, 200, 350, 140), undefined, false, false, 0, 70, 0, 0, 0, 0.9, 0),
+                      new Hitbox(new Rect(0, 100, 100, 200), undefined, false, false, 0, 70, 0, 0, 0, 0.5, 1),
+                      new Hitbox(new Tri(400, 200, 430, 140, 460, 200), undefined, false, false, 0, 70, 0, 0, 0, 0.1, 0),
+                      new Hitbox(new Line(0, 0, 480, 0, true), undefined, false, false, 0, 0, 0, 0, 0, 1, 0),
+                      new Hitbox(new Line(480, 0, 480, 360, true), undefined, false, false, 0, 0, 0, 0, 0, 1, 0),
+                      new Hitbox(new Line(0, 360, 0, 0, true), undefined, false, false, 0, 0, 0, 0, 0, 1, 0),
+                      new Hitbox(new Circle(0, 0, 25), undefined, false, false, 230, 110, 0, 0, 1, 0.3, 0)];
+                      
         shapes[0].set_rot_params(140, 30, 0, 0);
         shapes[0].kp = 0.008;
         shapes[0].kd = 0.08;
         shapes[0].setA = 0;
+        shapes[0].debugDrawColor = "green";
         
+        shapes[4].surfaceV = 2;
+        shapes[4].debugDrawColor = "purple";
+        
+        let mover = new Hitbox(new RotRect(0, 0, 50, 25, PI/12), undefined, true, false, 270, 110, 0, 0, 0.5, 0, 1);
+        shapes.push(mover);
+        
+        let rotor = new Hitbox(new RotRect(0, 0, 50, 25, 0), undefined, false, true, 100, 90, 0, 0, 0, 0.5, 0, 1, one_way_platform);
+        rotor.set_rot_params(5, 0, 0, 0.005);
+        rotor.debugDrawColor = "blue";
         shapes.push(rotor);
         
-        var pent = new Hitbox(new Poly([0, 30, 20, -20, -30], [0, 20, 50, 50, 20], undefined), undefined, true, true, 300, 100, 0, 0, 1, 0.5, 0, one_way_platform, tipping_platform);
+        let pent = new Hitbox(new Poly([0, 30, 20, -20, -30], [0, 20, 50, 50, 20], undefined), undefined, true, true, 300, 100, 0, 0, 1, 0.5, 0, 1,
+                              one_way_platform, tipping_platform, tipping_platform);
         pent.set_rot_params(0, 20, 0, .01);
         pent.kp = 0.008;
         pent.kd = 0.08;
         pent.setA = 0;
+        pent.debugDrawColor = "green";
         shapes.push(pent);
         
         sprites = [];
         
-        water = {"drag": 0.8, "vx": 0, "vy": 0, "swim": true};
+        let water = {"drag": 0.9, "vx": 0, "vy": 0, "swim": true};
         
-        sprites.push(new Hitbox(new Rect(0, 0, 50, 170, undefined), undefined, false, false, 0, 0, 0, 0, 0, 0, 0, undefined, fluid_effect));
-        sprites[0].parent = water;
+        sprites.push(new Hitbox(new Rect(0, 0, 50, 170, undefined), undefined, false, false, 0, 0, 0, 0, 0, 0, 0, 1, undefined, fluid_effect));
+        sprites[sprites.length - 1].fluid = water;
+        sprites[sprites.length - 1].debugDrawColor = "rgba(0, 0, 0, 0)";
+        sprites[sprites.length - 1].debugDrawFill = "rgba(0, 0, 255, 0.5)";
         
-        var i = 0;
-        var j = 0;
+        let i = 0;
+        let j = 0;
         
         // player parameters
-        var jumpStrength = 12;
-        var groundWalkPower = 2;
-        var fluidWalkPower  = 6;
-        var voidWalkPower   = 0.2;
+        let jumpStrength = 13;
+        let groundWalkPower = 2;
+        let fluidWalkPower  = 12;
+        let voidWalkPower   = 0.2;
         
+        let hr = new Hitbox(new Rect(7, 1, 14, 36), undefined, true, false, 200, 5, 0, 0, 0.000503, 1, 0, 1);
+        let hc = new Hitbox(new Circle(0, 0, 10), undefined, true, false, 200, 40, 0, 0, 0.000503, 1, 0, 1);
+        hr.slipperyWalls = true;
+        hc.slipperyWalls = true;
+        hr.debugDrawColor = "red";
+        hc.debugDrawColor = "red";
+        h = hr;
+        
+        // box (the solid hitbox) is not defined with "moves" set, despite the fact it moves with the nonsolid hitbox,
+        // because "moves" being set means that the hitbox promises to physics objects that it will move by its current vx and vy
+        // between their motion_sweep and motion_correct phases. the box, being itself a physics object, will not for sure
+        // move by its current vx and vy. 
+        // the obvious problem with this is that the velocity other objects see the solid box having when they collide
+        // will be 0, leading to an incorrect velocity update, but this will not be too noticeable if the box is just used as
+        // a thing to push around the world rather than platform on
+        // in general... box interaction is not very physically accurate (avoiding collision crushes was prioritized).
+        let box = new Hitbox(new Rect(0, 0, 24, 24), undefined, false, false, 300, 180, 0, 0, 0.0003, 0.5, 0.5, 1, one_way_platform, box_effect_solid);
+        let box2 = new Hitbox(new Rect(0, 0, 24, 24), undefined, false, false, 300, 180, 0, 0, 0.0003, 0.5, 0.5, 1, undefined, box_effect_nonsolid);
+        box2.debugDrawFill = "rgba(196, 64, 0, 0.5)"
+        box2.events = box.events;
+        shapes.push(box);
+        sprites.push(box2);
+                
         function tick() {
-          if (dead) {
+          if (stopped) {
             return;
           }
           
           d.fillStyle = "black";
           d.fillRect(0, 0, 480, 360);
           
-          for (var shape of sprites) {
-            draw(shape.shape, d, "#002070", true);
-          }
+          cam.update();
+          debug_draw([shapes, sprites, h], cam, d);
           
-          draw(h.shape, d, "red", false);
+          i = (i + TAU/60) % TAU;
+          j = (j + TAU/360) % TAU;
           
-          for (var shape of shapes) {
-            draw(shape.shape, d, "white", false);
-          }
-          
-          i = (i + tau/60) % tau;
-          j = (j + tau/360) % tau;
-          
-          
-          if (Math.abs(shapes[0].a - shapes[0].setA) < fuzziest) {
+          if (Math.abs(shapes[0].a - shapes[0].setA) < FUZZIEST) {
             shapes[0].va = shapes[0].setA - shapes[0].a;
           } else {
             shapes[0].va += (shapes[0].setA - shapes[0].a) * shapes[0].kp;
             shapes[0].va -= shapes[0].va * shapes[0].kd;
           }
           
-          if (Math.abs(pent.a - pent.setA) < fuzziest) {
+          if (Math.abs(pent.a - pent.setA) < FUZZIEST) {
             pent.va = pent.setA - pent.a;
           } else {
             pent.va += (pent.setA - pent.a) * pent.kp;
@@ -170,24 +172,37 @@
           pent.vy = 1*Math.sin(i);
           pent.vx = 2*Math.sin(j);
           
+          for (let event of box2.events) {
+            if (event.type == "vel") {
+              box2.vx += event.vx;
+              box2.vy += event.vy;
+            }
+          }
+          
+          box2.vx += gravity.x;
+          box2.vy += gravity.y;
+          
+          box.events.length = 0;
+          
           h.motion_sweep(shapes);
+          box2.motion_sweep(shapes);
          
           for (let shape of shapes) { 
             shape.motion_ground();
           }
           
           h.motion_correct(shapes);
-          h.sprite_collide(sprites);
+          
+          box2.motion_correct(shapes);
+          box.moveto(box2.x, box2.y);
+          
+          h.nonsolid_collide(sprites);
           
           // player logic block, ought to be associated with an object after this demo...
           {
-            // TODO someday (should be very simple): object-specific drag...
             let swim = false;
             let grav = (h.gravity == undefined) ? gravity : h.gravity;
-            let startVx = h.vx;
-            let startVy = h.vy;
-            h.vx = 0;
-            h.vy = 0;
+            
           
             let totalFluidFraction = 0;
           
@@ -200,7 +215,17 @@
                 
                 if (event.obj.swim) swim = true;
               }
+              
+              if (event.type == "vel") {
+                h.vx += event.vx;
+                h.vy += event.vy;
+              }
             }
+            
+            let startVx = h.vx;
+            let startVy = h.vy;
+            h.vx = 0;
+            h.vy = 0;
             
             let totalDrag = 0;
             
@@ -222,10 +247,18 @@
               totalDrag += (1 - totalFluidFraction) * air.drag;
             }
             
-            if (air.swim) swim = true;
+            swim = swim || air.swim;
             
             let groundMove = 0;
-            let fluidMove  = (1 - totalDrag) * fluidWalkPower;
+            let fluidMove  = (1 - totalDrag) * totalDrag * fluidWalkPower;
+            
+            // sort of bizarre math needed to keep drag in 0 to 1 range and stop
+            // dragAdjust from slowing down objects when original drag was 0
+            if (h.dragAdjust > 1) {
+              totalDrag = 1 - (1 - totalDrag) / h.dragAdjust;
+            } else if (h.dragAdjust > 0) {
+              totalDrag = Math.max(totalDrag * h.dragAdjust, 1 - (1 - totalDrag) / h.dragAdjust);
+            }
             
             if (h.onGround) {
               groundMove = (1 - h.groundObj.frict * h.frict) * groundWalkPower;
@@ -236,15 +269,20 @@
             
             if (keysPressed["arrowleft"] ) {
               h.vx += -maxMove;
+              left = true;
             }
             
             if (keysPressed["arrowright"]) {
               h.vx += maxMove;
+              left = false;
             }
           
             if (keysPressed["arrowdown"] && swim) {
               h.vy += maxMove;
             }
+            
+            h.vx *= totalDrag;
+            h.vy *= totalDrag;
             
             if (keysPressed["arrowup"]) {
               if (h.onGround && totalFluidFraction < 1/2) {
@@ -271,14 +309,13 @@
               }
             }
             
-            // transfer momentum from moving or jumping on a tipping object to the object
-            // (as obviously this velocity won't be transfered in the collide stages where the function is normally called)
-            if (h.groundObj != undefined && h.groundObj.rotates && h.groundPt != undefined && h.groundObj.collideFunc == tipping_platform) {
-              tipping_platform(h.groundObj, h, h.groundNorm, h.vx - startVx, h.vy - startVy, h.groundPt);
+            if (h.onGround && !swim && h.groundObj != undefined && h.groundObj.supportingFunc != undefined) {
+              h.groundObj.supportingFunc(h.groundObj, h, h.groundNorm, h.vx - startVx, h.vy - startVy, h.groundPt);
             }
             
             h.vx += grav.x;
             h.vy += grav.y;
+            
             
             if (h.events.includes("crush")) {
               h.moveto(200, 5);
@@ -305,24 +342,27 @@
             }
             
             if (keysPressed["x"]) {
-              dead = true;
+              stopped = true;
             }
           
           }
+          
+          requestAnimationFrame(tick);
         }
       
-        var gameCanvas = document.getElementById("gameCanvas");
+        let gameCanvas = document.getElementById("gameCanvas");
         d = gameCanvas.getContext("2d");
-        var loop = setInterval(tick, 1000/fps);
+        //var loop = setInterval(tick, 1000/fps); // requestAnimationFrame. maybe run game at 300fps internally, render based on screen speed?
+        requestAnimationFrame(tick);
       }
       
-
     </script>
 </head>
-<body onload="game();" onkeydown="if (!event.repeat) {key_down(event.key);}", onkeyup="if (!event.repeat) {key_up(event.key);}">
-    <div id="spriteContainer" style="overflow: hidden;"></div>
-    <canvas id="gameCanvas" width=480 height=360 style="border:1px solid #FFFFFF" onmousemove="mouseX = event.offsetX; mouseY = event.offsetY;"></canvas>
-    <p>Arrow keys to move, press c to turn into a circle, r to turn into a rectangle<p>
+<body onload="game();" onkeydown="if (!event.repeat) {key_down(event.key);}" onkeyup="if (!event.repeat) {key_up(event.key);}">
+    <div id="gameContainer" style="overflow: hidden; display: block; position: relative; margin: auto; width: 480px; height: 360px; border:1px solid #FFFFFF;">
+      <canvas id="gameCanvas" width=480 height=360 onmousemove="mouseX = event.offsetX; mouseY = event.offsetY;" style="position: absolute;"></canvas>
+    </div>
+    <p style="margin: auto; text-align: center;">Press c to turn into a circle, r to turn into a rectangle<p>
     <p id="blammer" style="color: red;"></p>
 </body>
 </html>
